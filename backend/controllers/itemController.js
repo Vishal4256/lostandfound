@@ -174,9 +174,46 @@ exports.searchVectorMatches = async (req, res) => {
   }
 };
 
+const jwt = require('jsonwebtoken');
+require('../models/User'); // Ensure User schema is registered for populate
+
+const JWT_SECRET = process.env.JWT_SECRET || 'lostandfound_super_secret_key_change_in_prod';
+
 exports.getAllItems = async (req, res) => {
   try {
-    const items = await Item.find().sort({ date: -1 }).limit(20);
+    let filter = {};
+
+    // Check if user requested their own items
+    if (req.query.mine === 'true') {
+      let userId = req.user?._id;
+      if (!userId && req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+        try {
+          const token = req.headers.authorization.split(' ')[1];
+          const decoded = jwt.verify(token, JWT_SECRET);
+          userId = decoded.id;
+        } catch (e) {
+          // invalid token
+        }
+      }
+
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'Authentication required for my reports' });
+      }
+      filter.reporterId = userId;
+    } else {
+      if (req.query.category && req.query.category !== 'All') {
+        filter.category = req.query.category;
+      }
+      if (req.query.type && req.query.type !== 'all') {
+        filter.type = req.query.type;
+      }
+    }
+
+    const items = await Item.find(filter)
+      .populate('reporterId', 'name email avatar')
+      .sort({ createdAt: -1, date: -1 })
+      .limit(50);
+
     res.status(200).json({
       success: true,
       count: items.length,
@@ -194,7 +231,7 @@ exports.getAllItems = async (req, res) => {
  */
 exports.getItemById = async (req, res) => {
   try {
-    const item = await Item.findById(req.params.id);
+    const item = await Item.findById(req.params.id).populate('reporterId', 'name email avatar');
     if (!item) {
       return res.status(404).json({ success: false, message: 'Item not found' });
     }
@@ -204,3 +241,35 @@ exports.getItemById = async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error fetching item' });
   }
 };
+
+/**
+ * Update item status (e.g. Active -> Resolved)
+ * Route: PATCH /api/items/:id/status
+ */
+exports.updateItemStatus = async (req, res) => {
+  try {
+    const { status } = req.body;
+    if (!status || !['Active', 'Pending Claim', 'Resolved'].includes(status)) {
+      return res.status(400).json({ success: false, message: 'Valid status required (Active, Pending Claim, Resolved)' });
+    }
+
+    const item = await Item.findById(req.params.id);
+    if (!item) {
+      return res.status(404).json({ success: false, message: 'Item not found' });
+    }
+
+    // Ensure the requester is the reporter
+    if (item.reporterId && item.reporterId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ success: false, message: 'Only the reporter can update status' });
+    }
+
+    item.status = status;
+    await item.save();
+
+    res.json({ success: true, data: item });
+  } catch (error) {
+    console.error('Error updating item status:', error);
+    res.status(500).json({ success: false, message: 'Server error updating status' });
+  }
+};
+

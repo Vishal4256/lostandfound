@@ -1,11 +1,15 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Mail, Lock, Eye, EyeOff, MapPin } from 'lucide-react'
 import { toast } from 'sonner'
+import { useAuth } from '../context/AuthContext'
 
 export default function Login() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const { login, register } = useAuth()
+
   const [mode, setMode] = useState('login')
   const [showPass, setShowPass] = useState(false)
   const [form, setForm] = useState({ email: '', password: '', name: '' })
@@ -15,10 +19,22 @@ export default function Login() {
   const handleSubmit = async (e) => {
     e.preventDefault()
     setLoading(true)
-    await new Promise(r => setTimeout(r, 900))
-    toast.success(mode === 'login' ? 'Welcome back!' : 'Account created!')
-    navigate('/')
-    setLoading(false)
+
+    try {
+      if (mode === 'login') {
+        await login(form.email, form.password)
+        toast.success('Welcome back!')
+      } else {
+        await register(form.name, form.email, form.password)
+        toast.success('Account created! Welcome to FindIt.')
+      }
+      const destination = location.state?.from?.pathname || '/'
+      navigate(destination, { replace: true })
+    } catch (err) {
+      toast.error(err.response?.data?.message || err.message || 'Authentication failed')
+    } finally {
+      setLoading(false)
+    }
   }
 
   const inputWrap = { position: 'relative', display: 'flex', alignItems: 'center' }
@@ -49,13 +65,13 @@ export default function Login() {
             {mode === 'login' ? 'Welcome back' : 'Create account'}
           </h2>
           <p style={{ color: '#71717A', fontSize: 13, textAlign: 'center', marginBottom: 28 }}>
-            {mode === 'login' ? 'Sign in to manage your reports' : 'Start helping your community'}
+            {mode === 'login' ? 'Sign in to manage your reports & chats' : 'Join to connect with your community'}
           </p>
 
           {/* Toggle */}
           <div style={{ display: 'flex', gap: 4, background: '#09090B', borderRadius: 10, padding: 4, marginBottom: 24 }}>
             {[['login', 'Sign In'], ['signup', 'Sign Up']].map(([val, label]) => (
-              <button key={val} onClick={() => setMode(val)} style={{
+              <button key={val} type="button" onClick={() => setMode(val)} style={{
                 flex: 1, padding: '9px 0', borderRadius: 8, border: 'none',
                 background: mode === val ? '#18181B' : 'transparent',
                 color: mode === val ? '#FAFAFA' : '#71717A',

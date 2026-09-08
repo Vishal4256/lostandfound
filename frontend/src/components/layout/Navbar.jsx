@@ -1,18 +1,29 @@
 import { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Search, Plus, LayoutGrid, User, Menu, X, MapPin } from 'lucide-react'
+import { Plus, LayoutGrid, User, Menu, X, MapPin, LogOut, LogIn } from 'lucide-react'
+import { useAuth } from '../../context/AuthContext'
 
 const Navbar = () => {
   const [open, setOpen] = useState(false)
+  const [profileDropdown, setProfileDropdown] = useState(false)
   const { pathname } = useLocation()
   const navigate = useNavigate()
+  const { user, isAuthenticated, logout } = useAuth()
   const active = (p) => pathname === p
 
   const links = [
     { to: '/', label: 'Browse', icon: LayoutGrid },
-    { to: '/profile', label: 'My Reports', icon: User },
+    { to: '/profile', label: 'My Reports & Chats', icon: User },
   ]
+
+  const handleLogout = () => {
+    logout()
+    setProfileDropdown(false)
+    navigate('/')
+  }
+
+  const userInitial = user?.name ? user.name.charAt(0).toUpperCase() : 'U'
 
   return (
     <>
@@ -22,7 +33,7 @@ const Navbar = () => {
         backdropFilter: 'blur(20px)',
         borderBottom: '1px solid var(--border)',
       }}>
-        <div style={{ maxWidth: 1280, margin: '0 auto', padding: '0 24px', display: 'flex', alignItems: 'center', height: 60, gap: 32 }}>
+        <div style={{ maxWidth: 1280, margin: '0 auto', padding: '0 24px', display: 'flex', alignItems: 'center', height: 60, gap: 28 }}>
           {/* Logo */}
           <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
             <div style={{
@@ -37,7 +48,7 @@ const Navbar = () => {
             </span>
           </Link>
 
-          {/* Desktop nav */}
+          {/* Desktop nav links */}
           <nav style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1 }} className="hidden-mobile">
             {links.map(({ to, label }) => (
               <Link key={to} to={to} style={{
@@ -51,14 +62,15 @@ const Navbar = () => {
             ))}
           </nav>
 
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* Right action area */}
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
             <button
               onClick={() => navigate('/add-item')}
               style={{
                 display: 'flex', alignItems: 'center', gap: 7,
                 padding: '8px 16px', borderRadius: 10,
                 background: 'var(--accent)', color: 'white',
-                border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 14,
+                border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 13,
                 fontFamily: 'Inter, sans-serif',
                 boxShadow: '0 1px 2px rgba(0,0,0,0.3)',
                 transition: 'opacity 0.15s, transform 0.15s'
@@ -69,6 +81,94 @@ const Navbar = () => {
               <Plus size={16} strokeWidth={2.5} />
               Report Item
             </button>
+
+            {/* Auth section */}
+            {isAuthenticated ? (
+              <div style={{ position: 'relative' }}>
+                <button
+                  onClick={() => setProfileDropdown(v => !v)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 9,
+                    background: 'var(--bg-card)', border: '1px solid var(--border)',
+                    borderRadius: 20, padding: '4px 10px 4px 5px',
+                    cursor: 'pointer', color: 'var(--text)'
+                  }}
+                >
+                  <div style={{
+                    width: 26, height: 26, borderRadius: '50%',
+                    background: 'var(--accent)', color: 'white',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontWeight: 700, fontSize: 12
+                  }}>
+                    {userInitial}
+                  </div>
+                  <span style={{ fontSize: 13, fontWeight: 600, maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {user?.name || 'Account'}
+                  </span>
+                </button>
+
+                <AnimatePresence>
+                  {profileDropdown && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95, y: 6 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.95, y: 6 }}
+                      style={{
+                        position: 'absolute', right: 0, top: '100%', marginTop: 8,
+                        background: 'var(--bg-card)', border: '1px solid var(--border)',
+                        borderRadius: 14, padding: 6, minWidth: 170,
+                        boxShadow: '0 10px 30px rgba(0,0,0,0.5)', zIndex: 60
+                      }}
+                    >
+                      <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', marginBottom: 4 }}>
+                        <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{user?.name}</p>
+                        <p style={{ fontSize: 11, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.email}</p>
+                      </div>
+                      <Link
+                        to="/profile"
+                        onClick={() => setProfileDropdown(false)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          padding: '8px 12px', borderRadius: 8, fontSize: 13,
+                          color: 'var(--text)', textDecoration: 'none', fontWeight: 500
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-surface)'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                      >
+                        <User size={14} /> My Dashboard
+                      </Link>
+                      <button
+                        onClick={handleLogout}
+                        style={{
+                          width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+                          padding: '8px 12px', borderRadius: 8, fontSize: 13,
+                          color: '#EF4444', background: 'none', border: 'none',
+                          cursor: 'pointer', textAlign: 'left', fontWeight: 500, fontFamily: 'Inter, sans-serif'
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,0.1)'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                      >
+                        <LogOut size={14} /> Sign Out
+                      </button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            ) : (
+              <Link
+                to="/login"
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '7px 14px', borderRadius: 9,
+                  background: 'var(--bg-surface)', border: '1px solid var(--border)',
+                  color: 'var(--text)', textDecoration: 'none', fontSize: 13, fontWeight: 600,
+                  transition: 'border-color 0.15s'
+                }}
+              >
+                <LogIn size={15} /> Sign In
+              </Link>
+            )}
+
             <button onClick={() => setOpen(v => !v)} style={{ display: 'none', background: 'none', border: 'none', color: 'var(--text-2)', cursor: 'pointer', padding: 6 }} className="show-mobile">
               {open ? <X size={22} /> : <Menu size={22} />}
             </button>
