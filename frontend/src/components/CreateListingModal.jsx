@@ -8,7 +8,7 @@ import { toast } from 'sonner';
 const CATEGORIES = ['Electronics', 'Accessories', 'Keys', 'Pets', 'Clothing', 'Documents', 'Jewellery', 'Other'];
 
 const CreateListingModal = ({ isOpen, onClose, onItemCreated }) => {
-  const [formData, setFormData] = useState({ title: '', description: '', category: 'Other', type: 'found', location: '' });
+  const [formData, setFormData] = useState({ title: '', description: '', category: 'Other', type: 'found', addressText: '' });
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -35,7 +35,8 @@ const CreateListingModal = ({ isOpen, onClose, onItemCreated }) => {
       data.append('description', formData.description);
       data.append('category', formData.category);
       data.append('type', formData.type);
-      data.append('location', formData.location);
+      data.append('addressText', formData.addressText);
+      data.append('coordinates', JSON.stringify([0, 0]));
       await axios.post('/api/items', data, { headers: { 'Content-Type': 'multipart/form-data' } });
       toast.success('Item reported successfully!');
       onItemCreated?.();
@@ -49,7 +50,7 @@ const CreateListingModal = ({ isOpen, onClose, onItemCreated }) => {
   };
 
   const handleClose = () => {
-    setFormData({ title: '', description: '', category: 'Other', type: 'found', location: '' });
+    setFormData({ title: '', description: '', category: 'Other', type: 'found', addressText: '' });
     setFile(null);
     setPreview(null);
     onClose();
@@ -146,7 +147,7 @@ const CreateListingModal = ({ isOpen, onClose, onItemCreated }) => {
                 </div>
                 <div>
                   <label className={labelClass}><MapPin size={10} className="inline mr-1" />Location</label>
-                  <input name="location" value={formData.location} onChange={handleChange} placeholder="e.g. Central Park, NY" className={inputClass} />
+                  <input name="addressText" value={formData.addressText} onChange={handleChange} placeholder="e.g. Central Park, NY" className={inputClass} />
                 </div>
               </div>
 

@@ -1,133 +1,130 @@
-import { MapPin, Calendar, CheckCircle2, ChevronRight, AlertCircle } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { MapPin, Calendar, ChevronRight, AlertCircle } from 'lucide-react';
 import Tilt from 'react-parallax-tilt';
+
+const TYPE_STYLES = {
+  lost: { label: 'Lost', color: '#EF4444', bg: 'rgba(239,68,68,0.1)', border: 'rgba(239,68,68,0.2)' },
+  found: { label: 'Found', color: '#10B981', bg: 'rgba(16,185,129,0.1)', border: 'rgba(16,185,129,0.2)' },
+};
 
 const MatchResultsGrid = ({ results }) => {
   if (!results || results.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center p-16 rounded-2xl border border-dashed" style={{ borderColor: 'rgba(6,182,212,0.15)', background: 'rgba(6,182,212,0.02)' }}>
-        <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4" style={{ background: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.2)' }}>
-          <AlertCircle className="text-cyan-500" size={28} />
-        </div>
-        <h3 className="text-lg font-bold text-white mb-2">No items found</h3>
-        <p className="text-slate-500 text-center text-sm max-w-sm">
-          Our AI couldn't find any matches. Report an item or try a different image.
-        </p>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '80px 24px', borderRadius: 16, border: '2px dashed var(--border)', background: 'var(--bg-surface)' }}>
+        <AlertCircle size={36} color="var(--text-3)" style={{ marginBottom: 12 }} />
+        <p style={{ color: 'var(--text)', fontWeight: 600, fontSize: 16, marginBottom: 4 }}>No items found</p>
+        <p style={{ color: 'var(--text-3)', fontSize: 14, textAlign: 'center', maxWidth: 300 }}>Try adjusting your filters or report a new item to get started.</p>
       </div>
     );
   }
 
-  const getScoreColor = (pct) => {
-    if (pct >= 90) return { text: '#10b981', bg: 'rgba(16,185,129,0.1)', border: 'rgba(16,185,129,0.25)' };
-    if (pct >= 75) return { text: '#f59e0b', bg: 'rgba(245,158,11,0.1)', border: 'rgba(245,158,11,0.25)' };
-    return { text: '#8b5cf6', bg: 'rgba(139,92,246,0.1)', border: 'rgba(139,92,246,0.25)' };
-  };
-
-  const getTypeBadge = (type) => {
-    if (type === 'lost') return { label: 'LOST', color: '#ef4444', bg: 'rgba(239,68,68,0.12)' };
-    return { label: 'FOUND', color: '#10b981', bg: 'rgba(16,185,129,0.12)' };
-  };
-
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 20 }}>
       {results.map((item, i) => {
-        const score = item.matchPercentage || Math.floor(Math.random() * 30 + 65);
-        const scoreStyle = getScoreColor(score);
-        const typeBadge = getTypeBadge(item.type);
+        const score = item.matchPercentage || Math.floor(Math.random() * 25 + 72);
+        const type = TYPE_STYLES[item.type] || TYPE_STYLES.found;
 
         return (
-          <Tilt
-            key={item._id || i}
-            glareEnable
-            glareMaxOpacity={0.1}
-            glareColor="#06b6d4"
-            scale={1.02}
-            tiltMaxAngleX={6}
-            tiltMaxAngleY={6}
-            className="h-full"
-          >
+          <Tilt key={item._id || i} glareEnable glareMaxOpacity={0.04} scale={1.015} tiltMaxAngleX={4} tiltMaxAngleY={4} className="h-full">
             <motion.div
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.06 }}
-              className="group flex flex-col h-full rounded-2xl overflow-hidden border transition-all duration-300"
+              transition={{ delay: i * 0.05 }}
               style={{
-                background: 'linear-gradient(135deg, rgba(8,15,40,0.9) 0%, rgba(15,23,64,0.9) 100%)',
-                border: '1px solid rgba(6,182,212,0.12)',
-                boxShadow: '0 4px 24px rgba(0,0,0,0.4)',
+                display: 'flex', flexDirection: 'column', height: '100%',
+                background: 'var(--bg-card)',
+                border: '1px solid var(--border)',
+                borderRadius: 16,
+                overflow: 'hidden',
+                transition: 'border-color 0.2s, box-shadow 0.2s',
               }}
-              whileHover={{ boxShadow: '0 4px 40px rgba(6,182,212,0.15), 0 0 80px rgba(139,92,246,0.1)' }}
+              whileHover={{ boxShadow: '0 8px 40px rgba(0,0,0,0.4)' }}
+              onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--border-light)'}
+              onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}
             >
               {/* Image */}
-              <div className="relative h-48 overflow-hidden bg-slate-900">
+              <div style={{ position: 'relative', height: 200, overflow: 'hidden', background: '#111' }}>
                 <img
                   src={item.imageUrl}
                   alt={item.title}
-                  className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', transition: 'transform 0.5s' }}
+                  onMouseEnter={e => e.target.style.transform = 'scale(1.05)'}
+                  onMouseLeave={e => e.target.style.transform = 'scale(1)'}
                 />
-                <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(8,15,40,0.85) 0%, transparent 60%)' }} />
+                {/* Gradient overlay */}
+                <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(0,0,0,0.5) 0%, transparent 50%)' }} />
 
-                {/* Neon top line */}
-                <div className="absolute top-0 left-0 right-0 h-px" style={{ background: 'linear-gradient(90deg, transparent, #06b6d4, transparent)', opacity: 0.6 }} />
+                {/* Type badge */}
+                <span style={{
+                  position: 'absolute', top: 12, left: 12,
+                  padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700,
+                  color: type.color, background: type.bg, border: `1px solid ${type.border}`,
+                  backdropFilter: 'blur(8px)', letterSpacing: '0.05em', textTransform: 'uppercase'
+                }}>
+                  {type.label}
+                </span>
 
-                <div className="absolute top-3 left-3 flex gap-2">
-                  <span className="px-2.5 py-1 rounded-full text-xs font-bold border" style={{ color: scoreStyle.text, background: scoreStyle.bg, borderColor: scoreStyle.border }}>
-                    <CheckCircle2 size={10} className="inline mr-1" />
-                    {score}% Match
+                {/* Category */}
+                <span style={{
+                  position: 'absolute', top: 12, right: 12,
+                  padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                  color: 'var(--text-2)', background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)',
+                  border: '1px solid rgba(255,255,255,0.08)'
+                }}>
+                  {item.category}
+                </span>
+
+                {/* Match score (only when from search) */}
+                {item.matchPercentage && (
+                  <span style={{
+                    position: 'absolute', bottom: 12, right: 12,
+                    padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700,
+                    color: '#F97316', background: 'rgba(249,115,22,0.15)', border: '1px solid rgba(249,115,22,0.3)',
+                    backdropFilter: 'blur(8px)'
+                  }}>
+                    {score}% match
                   </span>
-                </div>
-                <div className="absolute top-3 right-3">
-                  <span className="px-2 py-1 rounded-md text-xs font-bold border border-white/10" style={{ color: typeBadge.color, background: typeBadge.bg }}>
-                    {typeBadge.label}
-                  </span>
-                </div>
+                )}
               </div>
 
               {/* Content */}
-              <div className="flex flex-col flex-grow p-4">
-                <div className="flex items-start justify-between gap-2 mb-2">
-                  <h3 className="text-sm font-bold text-white line-clamp-1">{item.title}</h3>
-                  <span className="shrink-0 text-xs px-2 py-0.5 rounded text-cyan-400" style={{ background: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.15)' }}>
-                    {item.category}
-                  </span>
-                </div>
-
-                <p className="text-slate-500 text-xs line-clamp-2 mb-3 flex-grow leading-relaxed">
-                  {item.description}
+              <div style={{ display: 'flex', flexDirection: 'column', flexGrow: 1, padding: '16px 18px 18px' }}>
+                <h3 style={{ color: 'var(--text)', fontWeight: 600, fontSize: 15, marginBottom: 6, lineHeight: 1.3, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical' }}>
+                  {item.title}
+                </h3>
+                <p style={{ color: 'var(--text-3)', fontSize: 13, lineHeight: 1.5, marginBottom: 14, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', flexGrow: 1 }}>
+                  {item.description || 'No description provided.'}
                 </p>
 
-                <div className="space-y-1.5 mb-4">
-                  <div className="flex items-center text-xs text-slate-500">
-                    <MapPin size={11} className="mr-1.5 text-cyan-600 shrink-0" />
-                    <span className="truncate">{item.location?.addressText || item.location || 'Unknown Location'}</span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 14 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-3)', fontSize: 12 }}>
+                    <MapPin size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {item.location?.addressText || item.location || 'Unknown location'}
+                    </span>
                   </div>
-                  <div className="flex items-center text-xs text-slate-500">
-                    <Calendar size={11} className="mr-1.5 text-violet-500 shrink-0" />
-                    <span>{new Date(item.date || item.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-                  </div>
-                </div>
-
-                {/* Match bar */}
-                <div className="mb-3">
-                  <div className="h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
-                    <motion.div
-                      className="h-full rounded-full"
-                      style={{ background: `linear-gradient(90deg, ${scoreStyle.text}, #8b5cf6)` }}
-                      initial={{ width: 0 }}
-                      animate={{ width: `${score}%` }}
-                      transition={{ duration: 0.8, delay: i * 0.06 + 0.2 }}
-                    />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-3)', fontSize: 12 }}>
+                    <Calendar size={13} style={{ color: 'var(--text-3)', flexShrink: 0 }} />
+                    <span>{new Date(item.date || item.createdAt || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
                   </div>
                 </div>
 
-                <button
-                  className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-semibold transition-all border hover:scale-[1.02]"
-                  style={{ borderColor: 'rgba(6,182,212,0.2)', color: '#06b6d4', background: 'rgba(6,182,212,0.05)' }}
-                  onMouseEnter={e => { e.currentTarget.style.background = 'rgba(6,182,212,0.12)'; e.currentTarget.style.boxShadow = '0 0 15px rgba(6,182,212,0.2)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'rgba(6,182,212,0.05)'; e.currentTarget.style.boxShadow = 'none'; }}
+                <Link
+                  to={`/item/${item._id || i}`}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+                    padding: '9px 0', borderRadius: 10,
+                    background: 'var(--bg-surface)',
+                    border: '1px solid var(--border)',
+                    color: 'var(--text-2)', fontSize: 13, fontWeight: 500,
+                    textDecoration: 'none', transition: 'all 0.15s'
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.color = 'var(--accent)'; e.currentTarget.style.background = 'var(--accent-dim)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-2)'; e.currentTarget.style.background = 'var(--bg-surface)'; }}
                 >
-                  Contact Reporter <ChevronRight size={13} />
-                </button>
+                  View Details <ChevronRight size={14} />
+                </Link>
               </div>
             </motion.div>
           </Tilt>

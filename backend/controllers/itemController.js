@@ -3,6 +3,13 @@ const { generateImageEmbedding } = require('../services/embeddingService');
 const cloudinary = require('cloudinary').v2;
 const streamifier = require('streamifier');
 
+// Configure Cloudinary from environment variables
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
 /**
  * Helper to upload buffer to Cloudinary
  */
@@ -26,7 +33,7 @@ const uploadToCloudinary = (buffer, folder) => {
  */
 exports.createListing = async (req, res) => {
   try {
-    const { title, description, category, type, coordinates, addressText } = req.body;
+    const { title, description, category, type, location, coordinates, addressText } = req.body;
     
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'Image is required' });
@@ -41,17 +48,19 @@ exports.createListing = async (req, res) => {
     // CPU-intensive operation, handled by @xenova/transformers
     const embedding = await generateImageEmbedding(req.file.buffer);
 
-    // 3. Create database entry
+    // 3. Build flexible location object
+    // Frontend may send a plain string (location) or structured data (coordinates + addressText)
+    const locationData = coordinates
+      ? { type: 'Point', coordinates: JSON.parse(coordinates), addressText: addressText || location }
+      : { addressText: location || addressText || 'Unknown' };
+
+    // 4. Create database entry
     const newItem = await Item.create({
       title,
-      description,
+      description: description || '',
       category,
       type, // 'lost' or 'found'
-      location: {
-        type: 'Point',
-        coordinates: coordinates ? JSON.parse(coordinates) : [0, 0], // Expecting stringified array '[lng, lat]'
-        addressText
-      },
+      location: locationData,
       imageUrl,
       reporterId: req.user._id, // Set by JWT auth middleware
       embedding
@@ -80,10 +89,6 @@ exports.createListing = async (req, res) => {
  */
 exports.searchVectorMatches = async (req, res) => {
   try {
-    // If I lost an item, I search 'found' items. If I found an item, I search 'lost' items.
-    const searchAgainstType = req.body.searchType === 'lost' ? 'found' : 'lost';
-    const filterCategory = req.body.category;
-
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'Query image is required for visual search' });
     }
@@ -91,66 +96,82 @@ exports.searchVectorMatches = async (req, res) => {
     // 1. Generate embedding for the query image
     const queryEmbedding = await generateImageEmbedding(req.file.buffer);
 
-    // 2. Build the $vectorSearch aggregation pipeline
-    // Requires MongoDB Atlas cluster >= M0 with 'vector_index' created
-    const vectorSearchStage = {
-      $vectorSearch: {
-        index: 'vector_index', // Name of the Atlas Vector Index
-        path: 'embedding',
-        queryVector: queryEmbedding,
-        numCandidates: 100, // HNSW candidate window size
-        limit: 10,          // Return top 10 matches
-        filter: {
-          type: searchAgainstType,
-          status: 'Active'
-        }
+    // Helper: cosine similarity between two vectors
+    const cosineSimilarity = (a, b) => {
+      let dot = 0, normA = 0, normB = 0;
+      for (let i = 0; i < a.length; i++) {
+        dot   += a[i] * b[i];
+        normA += a[i] * a[i];
+        normB += b[i] * b[i];
       }
+      return dot / (Math.sqrt(normA) * Math.sqrt(normB) + 1e-8);
     };
 
-    // Apply optional category filter
-    if (filterCategory && filterCategory !== 'All') {
-      vectorSearchStage.$vectorSearch.filter.category = filterCategory;
+    let results = [];
+
+    // 2a. Try Atlas $vectorSearch first (requires vector_index in Atlas)
+    try {
+      const pipeline = [
+        {
+          $vectorSearch: {
+            index: 'vector_index',
+            path: 'embedding',
+            queryVector: queryEmbedding,
+            numCandidates: 150,
+            limit: 20,
+          }
+        },
+        {
+          $project: {
+            title: 1, description: 1, imageUrl: 1, category: 1,
+            type: 1, date: 1, location: 1, status: 1,
+            score: { $meta: 'vectorSearchScore' }
+          }
+        }
+      ];
+
+      const atlasResults = await Item.aggregate(pipeline);
+
+      if (atlasResults.length > 0) {
+        results = atlasResults
+          .map(m => ({ ...m, matchPercentage: Math.round(m.score * 100) }))
+          .filter(m => m.matchPercentage >= 50) // 50% minimum for Atlas cosine
+          .sort((a, b) => b.matchPercentage - a.matchPercentage);
+
+        console.log(`Atlas vector search returned ${results.length} results`);
+      }
+    } catch (atlasErr) {
+      console.warn('Atlas $vectorSearch unavailable, falling back to in-memory cosine similarity:', atlasErr.message);
     }
 
-    const pipeline = [
-      vectorSearchStage,
-      {
-        // Project out the embedding array and calculate a normalized score
-        $project: {
-          title: 1,
-          description: 1,
-          imageUrl: 1,
-          category: 1,
-          date: 1,
-          location: 1,
-          status: 1,
-          // Atlas Vector Search score is exposed via meta
-          score: { $meta: 'vectorSearchScore' }
-        }
-      },
-      {
-        // Only return matches with high confidence (e.g., score >= 0.85)
-        $match: {
-          score: { $gte: 0.85 } 
-        }
-      }
-    ];
+    // 2b. Fallback: load all items and compute cosine similarity in memory
+    if (results.length === 0) {
+      console.log('Running in-memory cosine similarity search...');
+      const allItems = await Item.find({ embedding: { $exists: true, $not: { $size: 0 } } })
+        .select('title description imageUrl category type date location status embedding')
+        .lean();
 
-    // Execute aggregation
-    const matches = await Item.aggregate(pipeline);
-
-    // Format the results: Convert cosine distance score to a clean UI percentage
-    const formattedMatches = matches.map(match => ({
-      ...match,
-      matchPercentage: Math.round(match.score * 100)
-    }));
+      results = allItems
+        .map(item => {
+          const score = cosineSimilarity(queryEmbedding, item.embedding);
+          return { ...item, score, matchPercentage: Math.round(Math.max(0, score) * 100) };
+        })
+        .filter(item => item.score > 0.3) // Minimum 30% similarity
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 15)
+        .map(({ embedding, score, ...rest }) => rest); // Strip raw fields from response
+    }
 
     res.status(200).json({
       success: true,
-      count: formattedMatches.length,
-      data: formattedMatches
+      count: results.length,
+      data: results
     });
 
+  } catch (error) {
+    console.error('Error executing visual search:', error);
+    res.status(500).json({ success: false, message: 'Server Error executing visual search' });
+  }
 };
 
 exports.getAllItems = async (req, res) => {
@@ -164,5 +185,22 @@ exports.getAllItems = async (req, res) => {
   } catch (error) {
     console.error('Error fetching items:', error);
     res.status(500).json({ success: false, message: 'Server error fetching items' });
+  }
+};
+
+/**
+ * Gets a single item by its ID
+ * Route: GET /api/items/:id
+ */
+exports.getItemById = async (req, res) => {
+  try {
+    const item = await Item.findById(req.params.id);
+    if (!item) {
+      return res.status(404).json({ success: false, message: 'Item not found' });
+    }
+    res.status(200).json({ success: true, data: item });
+  } catch (error) {
+    console.error('Error fetching item:', error);
+    res.status(500).json({ success: false, message: 'Server error fetching item' });
   }
 };
