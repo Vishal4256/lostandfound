@@ -14,8 +14,15 @@ exports.register = async (req, res) => {
   try {
     const { name, email, password } = req.body;
 
-    if (!name || !email || !password) {
-      return res.status(400).json({ success: false, message: 'Please provide name, email, and password' });
+    if (!name || typeof name !== 'string' || !name.trim() ||
+        !email || typeof email !== 'string' || !email.trim() ||
+        !password || typeof password !== 'string') {
+      return res.status(400).json({ success: false, message: 'Please provide valid name, email, and password strings' });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      return res.status(400).json({ success: false, message: 'Please provide a valid email address' });
     }
 
     if (password.length < 6) {
@@ -56,8 +63,8 @@ exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    if (!email || !password) {
-      return res.status(400).json({ success: false, message: 'Please provide email and password' });
+    if (!email || typeof email !== 'string' || !password || typeof password !== 'string') {
+      return res.status(400).json({ success: false, message: 'Please provide valid email and password' });
     }
 
     const normalizedEmail = email.toLowerCase().trim();

@@ -367,9 +367,35 @@ async function runFullAuditSuite() {
 
     const resolvedItem = await Item.findById(testItemId);
     if (resolvedItem.status !== 'Resolved') throw new Error(`Item was not resolved automatically: ${resolvedItem.status}`);
-    console.log('  ✅ Parent item automatically transitioned to:', resolvedItem.status);
+    // 5i: Claimant attempting to approve their own claim must be rejected (HTTP 403)
+    try {
+      await axios.patch(`${BASE_URL}/claims/${testClaimId}/resolve`, {
+        status: 'approved'
+      }, {
+        headers: { Authorization: `Bearer ${tokenB}` }
+      });
+      throw new Error('Claimant was able to resolve their own claim');
+    } catch (err) {
+      if (err.response?.status === 403) {
+        console.log('  ✅ Claimant self-approval attempt correctly blocked with HTTP 403');
+      } else throw err;
+    }
 
-    // 5i: Resolved item cannot receive new claims
+    // 5j: Attempting to modify an already decided claim must be rejected (HTTP 400)
+    try {
+      await axios.patch(`${BASE_URL}/claims/${testClaimId}/resolve`, {
+        status: 'rejected'
+      }, {
+        headers: { Authorization: `Bearer ${tokenA}` }
+      });
+      throw new Error('Allowed modification of an already resolved claim');
+    } catch (err) {
+      if (err.response?.status === 400) {
+        console.log('  ✅ Modification of already decided claim correctly blocked with HTTP 400');
+      } else throw err;
+    }
+
+    // 5k: Resolved item cannot receive new claims
     try {
       await axios.post(`${BASE_URL}/claims/${testItemId}`, {
         proofDetails: 'Post-resolution claim attempt'

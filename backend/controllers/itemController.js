@@ -411,8 +411,20 @@ exports.updateItemStatus = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid item ID format' });
     }
 
-    if (!status) {
-      return res.status(400).json({ success: false, message: 'Status is required' });
+    if (!status || typeof status !== 'string') {
+      return res.status(400).json({ success: false, message: 'Valid status string is required' });
+    }
+
+    const clean = status.toLowerCase().trim().replace(/_/g, ' ');
+    let normalizedStatus;
+    if (clean === 'active') normalizedStatus = 'Active';
+    else if (clean === 'pending claim' || clean === 'pending') normalizedStatus = 'Pending Claim';
+    else if (clean === 'resolved') normalizedStatus = 'Resolved';
+    else {
+      return res.status(400).json({
+        success: false,
+        message: "Status must be 'Active', 'Pending Claim', or 'Resolved'"
+      });
     }
 
     const item = await Item.findById(id);
@@ -428,7 +440,7 @@ exports.updateItemStatus = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Only the item reporter or administrator can update status' });
     }
 
-    item.status = status;
+    item.status = normalizedStatus;
     await item.save();
 
     res.status(200).json({

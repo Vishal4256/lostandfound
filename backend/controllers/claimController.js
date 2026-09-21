@@ -29,11 +29,11 @@ const uploadToCloudinary = (buffer, folder) => {
  */
 exports.submitClaim = async (req, res) => {
   try {
-    const { itemId } = req.params;
+    const itemId = req.params.itemId || req.body.itemId;
     const { proofDetails } = req.body;
 
-    if (!mongoose.Types.ObjectId.isValid(itemId)) {
-      return res.status(400).json({ success: false, message: 'Invalid item ID format' });
+    if (!itemId || !mongoose.Types.ObjectId.isValid(itemId)) {
+      return res.status(400).json({ success: false, message: 'Valid item ID is required' });
     }
 
     if (!proofDetails || typeof proofDetails !== 'string' || !proofDetails.trim()) {
@@ -209,6 +209,27 @@ exports.resolveClaim = async (req, res) => {
 
     if (!isReporter && !isAdmin) {
       return res.status(403).json({ success: false, message: 'Only the item reporter or administrator can resolve this claim' });
+    }
+
+    // Prevent claimant from resolving their own claim even in edge cases
+    if (claim.claimant.toString() === req.user._id.toString()) {
+      return res.status(403).json({ success: false, message: 'Claimant cannot approve or reject their own claim' });
+    }
+
+    // A claim that is not pending cannot be resolved again (state machine integrity)
+    if (claim.status !== 'pending') {
+      return res.status(400).json({
+        success: false,
+        message: `Claim has already been ${claim.status} and cannot be modified.`
+      });
+    }
+
+    // An item that is already resolved cannot accept another approved claim
+    if (status.toLowerCase() === 'approved' && item.status === 'Resolved') {
+      return res.status(400).json({
+        success: false,
+        message: 'This item has already been marked as Resolved and cannot accept another approved claim.'
+      });
     }
 
     claim.status = status.toLowerCase();
