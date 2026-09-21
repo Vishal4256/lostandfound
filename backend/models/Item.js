@@ -16,13 +16,29 @@ const itemSchema = new mongoose.Schema({
     type: String,
     required: true,
     enum: {
-      values: ['Electronics', 'Accessories', 'Clothing', 'Documents', 'Keys', 'Pets', 'Jewellery', 'Other'],
+      values: [
+        'Electronics',
+        'Accessories',
+        'Clothing',
+        'Documents',
+        'Keys',
+        'Pets',
+        'Jewellery',
+        'Wallets',
+        'IDs',
+        'Books',
+        'Other'
+      ],
       message: '`{VALUE}` is not a supported category'
     }
   },
+  // Supports both itemType and type ('lost' | 'found')
   type: {
     type: String,
-    required: true,
+    enum: ['lost', 'found']
+  },
+  itemType: {
+    type: String,
     enum: ['lost', 'found']
   },
   date: {
@@ -31,11 +47,16 @@ const itemSchema = new mongoose.Schema({
   },
   location: {
     addressText: { type: String, default: 'Unknown' },
-    coordinates: { type: [Number], default: undefined },
+    coordinates: { type: [Number], default: undefined } // [longitude, latitude]
   },
   imageUrl: {
     type: String,
-    required: true
+    required: [true, 'Image URL is required']
+  },
+  // Supports both reportedBy and reporterId
+  reportedBy: {
+    type: mongoose.Schema.ObjectId,
+    ref: 'User'
   },
   reporterId: {
     type: mongoose.Schema.ObjectId,
@@ -44,33 +65,36 @@ const itemSchema = new mongoose.Schema({
   status: {
     type: String,
     enum: ['Active', 'Pending Claim', 'Resolved'],
-    default: 'Active'
+    default: 'Active',
+    set: function(val) {
+      if (!val) return 'Active';
+      const clean = val.toLowerCase().replace(/_/g, ' ');
+      if (clean === 'active') return 'Active';
+      if (clean === 'pending claim' || clean === 'pending_claim' || clean === 'pending') return 'Pending Claim';
+      if (clean === 'resolved') return 'Resolved';
+      return val;
+    }
   },
   embedding: {
     type: [Number],
     required: true,
     validate: {
-      validator: (v) => v.length === 512,
+      validator: (v) => Array.isArray(v) && v.length === 512,
       message: 'Embedding must be exactly 512 numbers'
     }
   }
 }, { timestamps: true });
 
-itemSchema.index({ type: 1, status: 1 });
+// Pre-validate & pre-save hook to ensure synchronization between aliases
+itemSchema.pre('validate', function() {
+  if (!this.type && this.itemType) this.type = this.itemType;
+  if (!this.itemType && this.type) this.itemType = this.type;
+  if (!this.reportedBy && this.reporterId) this.reportedBy = this.reporterId;
+  if (!this.reporterId && this.reportedBy) this.reporterId = this.reportedBy;
+});
 
-/*
-======================================================================
-  MONGODB ATLAS $vectorSearch INDEX — create manually in Atlas UI
-  Index name: vector_index | Collection: items
-  {
-    "fields": [
-      { "numDimensions": 512, "path": "embedding", "similarity": "cosine", "type": "vector" },
-      { "path": "type", "type": "filter" },
-      { "path": "status", "type": "filter" },
-      { "path": "category", "type": "filter" }
-    ]
-  }
-======================================================================
-*/
+itemSchema.index({ type: 1, status: 1 });
+itemSchema.index({ category: 1, status: 1 });
+itemSchema.index({ reportedBy: 1 });
 
 module.exports = mongoose.model('Item', itemSchema);

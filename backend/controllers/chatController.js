@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Conversation = require('../models/Conversation');
 const Message = require('../models/Message');
 const Item = require('../models/Item');
@@ -16,7 +17,7 @@ exports.getUserConversations = async (req, res) => {
       .populate('item', 'title imageUrl category type status')
       .sort({ lastMessageAt: -1 });
 
-    res.json({ success: true, conversations });
+    res.status(200).json({ success: true, conversations });
   } catch (error) {
     console.error('Error fetching conversations:', error);
     res.status(500).json({ success: false, message: 'Server error fetching conversations' });
@@ -33,8 +34,8 @@ exports.getOrCreateConversation = async (req, res) => {
     const { itemId, recipientId } = req.body;
     const userId = req.user._id;
 
-    if (!itemId) {
-      return res.status(400).json({ success: false, message: 'itemId is required' });
+    if (!itemId || !mongoose.Types.ObjectId.isValid(itemId)) {
+      return res.status(400).json({ success: false, message: 'Valid itemId is required' });
     }
 
     const item = await Item.findById(itemId);
@@ -43,10 +44,14 @@ exports.getOrCreateConversation = async (req, res) => {
     }
 
     // Default recipient is the item's reporter if not provided
-    const targetRecipientId = recipientId || item.reporterId;
+    const targetRecipientId = recipientId || item.reportedBy || item.reporterId;
 
-    if (!targetRecipientId) {
-      return res.status(400).json({ success: false, message: 'Recipient not found for this item' });
+    if (!targetRecipientId || !mongoose.Types.ObjectId.isValid(targetRecipientId)) {
+      return res.status(400).json({ success: false, message: 'Valid recipient not found for this item' });
+    }
+
+    if (userId.toString() === targetRecipientId.toString()) {
+      return res.status(400).json({ success: false, message: 'Cannot start a conversation with yourself' });
     }
 
     // Check if conversation already exists for this item and these two users
@@ -70,7 +75,7 @@ exports.getOrCreateConversation = async (req, res) => {
         .populate('item', 'title imageUrl category type status');
     }
 
-    res.json({ success: true, conversation });
+    res.status(200).json({ success: true, conversation });
   } catch (error) {
     console.error('Error in getOrCreateConversation:', error);
     res.status(500).json({ success: false, message: 'Server error with conversation' });
@@ -86,6 +91,10 @@ exports.getMessages = async (req, res) => {
     const conversationId = req.params.id;
     const userId = req.user._id;
 
+    if (!mongoose.Types.ObjectId.isValid(conversationId)) {
+      return res.status(400).json({ success: false, message: 'Invalid conversation ID format' });
+    }
+
     const conversation = await Conversation.findById(conversationId);
     if (!conversation) {
       return res.status(404).json({ success: false, message: 'Conversation not found' });
@@ -100,7 +109,7 @@ exports.getMessages = async (req, res) => {
       .populate('sender', 'name email avatar')
       .sort({ createdAt: 1 });
 
-    res.json({ success: true, messages });
+    res.status(200).json({ success: true, messages });
   } catch (error) {
     console.error('Error fetching messages:', error);
     res.status(500).json({ success: false, message: 'Server error fetching messages' });
@@ -118,8 +127,16 @@ exports.sendMessage = async (req, res) => {
     const userId = req.user._id;
     const { text } = req.body;
 
-    if (!text || !text.trim()) {
+    if (!mongoose.Types.ObjectId.isValid(conversationId)) {
+      return res.status(400).json({ success: false, message: 'Invalid conversation ID format' });
+    }
+
+    if (!text || typeof text !== 'string' || !text.trim()) {
       return res.status(400).json({ success: false, message: 'Message text is required' });
+    }
+
+    if (text.trim().length > 2000) {
+      return res.status(400).json({ success: false, message: 'Message cannot exceed 2000 characters' });
     }
 
     const conversation = await Conversation.findById(conversationId);

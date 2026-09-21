@@ -2,24 +2,22 @@ require('dotenv').config();
 const http = require('http');
 const express = require('express');
 const mongoose = require('mongoose');
-const multer = require('multer');
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
 const { Server } = require('socket.io');
 
-const authMiddleware = require('./middleware/auth');
-const authController = require('./controllers/authController');
-const chatController = require('./controllers/chatController');
-const {
-  createListing,
-  searchVectorMatches,
-  getAllItems,
-  getItemById,
-  updateItemStatus
-} = require('./controllers/itemController');
+const authRoutes = require('./routes/authRoutes');
+const itemRoutes = require('./routes/itemRoutes');
+const claimRoutes = require('./routes/claimRoutes');
+const chatRoutes = require('./routes/chatRoutes');
 const { generateImageEmbedding } = require('./services/embeddingService');
 
 const app = express();
 const server = http.createServer(app);
+
+const JWT_SECRET = process.env.JWT_SECRET || 'lostandfound_super_secret_key_change_in_prod';
+const PORT = process.env.PORT || 5000;
+
 const io = new Server(server, {
   cors: {
     origin: ['http://localhost:5173', 'http://localhost:3000', 'http://127.0.0.1:5173'],
@@ -28,80 +26,110 @@ const io = new Server(server, {
   }
 });
 
-const PORT = process.env.PORT || 5000;
-
 // Middleware
-app.use(cors({ origin: ['http://localhost:5173', 'http://localhost:3000', 'http://127.0.0.1:5173'], credentials: true }));
-app.use(express.json());
+app.use(cors({
+  origin: ['http://localhost:5173', 'http://localhost:3000', 'http://127.0.0.1:5173'],
+  credentials: true
+}));
+app.use(express.json({ limit: '2mb' }));
 
-// Pass Socket.IO instance to all route handlers
+// Attach Socket.IO instance to all route handlers
 app.use((req, res, next) => {
   req.io = io;
   next();
 });
 
-// Multer for memory upload
-const upload = multer({ storage: multer.memoryStorage() });
+// ── API Routes ───────────────────────────────────────────────
+app.use('/api/auth', authRoutes);
+app.use('/api/items', itemRoutes);
+app.use('/api/claims', claimRoutes);
+app.use('/api/chat', chatRoutes);
 
-// ── Auth Routes ──────────────────────────────────────────────
-app.post('/api/auth/register', authController.register);
-app.post('/api/auth/login', authController.login);
-app.get('/api/auth/me', authMiddleware, authController.getMe);
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
+});
 
-// ── Item Routes ──────────────────────────────────────────────
-app.get('/api/items', getAllItems);
-app.post('/api/items/search', upload.single('image'), searchVectorMatches);
-app.post('/api/items', upload.single('image'), authMiddleware, createListing);
-app.get('/api/items/:id', getItemById);
-app.patch('/api/items/:id/status', authMiddleware, updateItemStatus);
+// 404 Handler for undefined API routes
+app.use('/api/*', (req, res) => {
+  res.status(404).json({
+    success: false,
+    message: `Cannot ${req.method} ${req.originalUrl}`
+  });
+});
 
-// ── Chat Routes ──────────────────────────────────────────────
-app.get('/api/chat/conversations', authMiddleware, chatController.getUserConversations);
-app.post('/api/chat/conversations', authMiddleware, chatController.getOrCreateConversation);
-app.get('/api/chat/conversations/:id/messages', authMiddleware, chatController.getMessages);
-app.post('/api/chat/conversations/:id/messages', authMiddleware, chatController.sendMessage);
+// Global Error Handler Middleware
+app.use((err, req, res, next) => {
+  console.error('Unhandled server error:', err);
+  res.status(err.statusCode || 500).json({
+    success: false,
+    message: err.message || 'Internal server error'
+  });
+});
 
-// ── Socket.IO Real-Time Messaging ────────────────────────────
+// ── Socket.IO Authentication & Real-Time Messaging ───────────
+io.use((socket, next) => {
+  const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.split(' ')[1];
+  if (!token) {
+    socket.userId = null;
+    return next();
+  }
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    socket.userId = decoded.id;
+    next();
+  } catch {
+    socket.userId = null;
+    next();
+  }
+});
+
 io.on('connection', (socket) => {
-  console.log(`🔌 Socket connected: ${socket.id}`);
-
-  // User joins their personal room for direct notifications
+  // Join private notification room (only for user's own ID)
   socket.on('join_user_room', (userId) => {
-    if (userId) {
+    if (socket.userId && socket.userId.toString() === userId?.toString()) {
       socket.join(`user_${userId}`);
-      console.log(`👤 User ${userId} joined their notification room`);
     }
   });
 
-  // User joins a specific conversation chat room
-  socket.on('join_conversation', (conversationId) => {
-    if (conversationId) {
-      socket.join(conversationId);
-      console.log(`💬 Socket ${socket.id} joined conversation: ${conversationId}`);
+  // Join specific conversation room with authorization check
+  socket.on('join_conversation', async (conversationId) => {
+    if (!conversationId || !mongoose.Types.ObjectId.isValid(conversationId)) return;
+    if (!socket.userId) return;
+
+    try {
+      const Conversation = require('./models/Conversation');
+      const conv = await Conversation.findById(conversationId);
+      if (conv && conv.participants.some(p => p.toString() === socket.userId.toString())) {
+        socket.join(conversationId);
+      }
+    } catch (err) {
+      console.error('Socket room join error:', err.message);
     }
   });
 
-  // User leaves a conversation room
+  // Leave conversation room
   socket.on('leave_conversation', (conversationId) => {
     if (conversationId) {
       socket.leave(conversationId);
-      console.log(`🚪 Socket ${socket.id} left conversation: ${conversationId}`);
     }
   });
 
-  // Typing status
+  // Typing status broadcast
   socket.on('typing', ({ conversationId, userName, isTyping }) => {
-    if (conversationId) {
+    if (conversationId && socket.rooms.has(conversationId)) {
       socket.to(conversationId).emit('user_typing', { userName, isTyping });
     }
   });
 
-  socket.on('disconnect', () => {
-    console.log(`❌ Socket disconnected: ${socket.id}`);
-  });
+  socket.on('disconnect', () => {});
 });
 
-// ── MongoDB Connection & Model Pre-warming ───────────────────
+// ── MongoDB Connection & CLIP Model Pre-warming ──────────────
 mongoose.connect(process.env.MONGO_URI)
 .then(async () => {
   console.log('Connected to MongoDB Atlas');
@@ -119,7 +147,7 @@ mongoose.connect(process.env.MONGO_URI)
     console.warn('Index migration skipped:', err.message);
   }
 
-  // Pre-load CLIP model using a real image
+  // Pre-warm local CLIP model
   (async () => {
     try {
       console.log('Pre-warming CLIP model…');
@@ -140,9 +168,11 @@ mongoose.connect(process.env.MONGO_URI)
   })();
 
   server.listen(PORT, () => {
-    console.log(`🚀 Server with Socket.IO running on port ${PORT}`);
+    console.log(`🚀 Server running on port ${PORT}`);
   });
 })
 .catch(err => {
   console.error('Failed to connect to MongoDB', err);
 });
+
+module.exports = { app, server };

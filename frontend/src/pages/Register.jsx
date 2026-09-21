@@ -1,16 +1,15 @@
 import { useState } from 'react'
-import { Link, useNavigate, useLocation } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Mail, Lock, Eye, EyeOff, MapPin, ArrowRight, AlertCircle, Loader2 } from 'lucide-react'
+import { User, Mail, Lock, Eye, EyeOff, MapPin, ArrowRight, AlertCircle, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAuth } from '../context/AuthContext'
 
-export default function Login() {
+export default function Register() {
   const navigate = useNavigate()
-  const location = useLocation()
-  const { login } = useAuth()
+  const { register } = useAuth()
 
-  const [form, setForm] = useState({ email: '', password: '' })
+  const [form, setForm] = useState({ name: '', email: '', password: '', confirmPassword: '' })
   const [showPass, setShowPass] = useState(false)
   const [loading, setLoading] = useState(false)
   const [errorBanner, setErrorBanner] = useState('')
@@ -24,19 +23,28 @@ export default function Login() {
     e.preventDefault()
     setErrorBanner('')
 
-    if (!form.email.trim() || !form.password) {
-      setErrorBanner('Please provide both email and password.')
+    if (!form.name.trim() || !form.email.trim() || !form.password) {
+      setErrorBanner('Please fill in all required fields.')
+      return
+    }
+
+    if (form.password.length < 6) {
+      setErrorBanner('Password must be at least 6 characters long.')
+      return
+    }
+
+    if (form.password !== form.confirmPassword) {
+      setErrorBanner('Passwords do not match.')
       return
     }
 
     setLoading(true)
     try {
-      await login(form.email.trim(), form.password)
-      toast.success('Welcome back!')
-      const destination = location.state?.from?.pathname || '/dashboard'
-      navigate(destination, { replace: true })
+      await register(form.name.trim(), form.email.trim(), form.password)
+      toast.success('Account created successfully! Welcome to FindIt.')
+      navigate('/dashboard', { replace: true })
     } catch (err) {
-      const msg = err.response?.data?.message || err.message || 'Invalid email or password'
+      const msg = err.response?.data?.message || err.message || 'Registration failed. Please try again.'
       setErrorBanner(msg)
       toast.error(msg)
     } finally {
@@ -59,7 +67,7 @@ export default function Login() {
         transition={{ duration: 0.3 }}
         style={{
           width: '100%',
-          maxWidth: 420,
+          maxWidth: 440,
           background: 'rgba(17, 17, 19, 0.85)',
           backdropFilter: 'blur(20px)',
           border: '1px solid rgba(255, 255, 255, 0.08)',
@@ -68,12 +76,12 @@ export default function Login() {
           boxShadow: '0 30px 70px -15px rgba(0,0,0,0.8), 0 0 40px rgba(99, 102, 241, 0.12)'
         }}
       >
-        {/* Top Accent Gradient */}
+        {/* Top Gradient Ribbon */}
         <div style={{ height: 4, background: 'linear-gradient(90deg, #6366f1, #ec4899, #f97316)' }} />
 
         <div style={{ padding: '36px 32px' }}>
           {/* Logo */}
-          <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', marginBottom: 28, justifyContent: 'center' }}>
+          <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', marginBottom: 26, justifyContent: 'center' }}>
             <div style={{
               width: 38,
               height: 38,
@@ -92,10 +100,10 @@ export default function Login() {
           </Link>
 
           <h2 style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 24, fontWeight: 800, color: '#fafafa', marginBottom: 6, letterSpacing: '-0.02em', textAlign: 'center' }}>
-            Welcome Back
+            Create an Account
           </h2>
           <p style={{ color: '#a1a1aa', fontSize: 13, textAlign: 'center', marginBottom: 24 }}>
-            Sign in to manage your reports, verify claims, and view community activity
+            Join the community to report items, track claims, and chat directly
           </p>
 
           {/* Error Banner */}
@@ -122,6 +130,37 @@ export default function Login() {
           )}
 
           <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Full Name */}
+            <div>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+                Full Name
+              </label>
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                <User size={16} style={{ position: 'absolute', left: 14, color: '#71717a', pointerEvents: 'none' }} />
+                <input
+                  type="text"
+                  value={form.name}
+                  onChange={handleChange('name')}
+                  placeholder="Alex Doe"
+                  required
+                  style={{
+                    width: '100%',
+                    background: '#141417',
+                    border: '1px solid #27272a',
+                    borderRadius: 12,
+                    padding: '12px 14px 12px 42px',
+                    color: '#fafafa',
+                    fontSize: 14,
+                    outline: 'none',
+                    boxSizing: 'border-box',
+                    transition: 'border-color 0.15s, box-shadow 0.15s'
+                  }}
+                  onFocus={e => e.target.style.borderColor = '#6366f1'}
+                  onBlur={e => e.target.style.borderColor = '#27272a'}
+                />
+              </div>
+            </div>
+
             {/* Email Address */}
             <div>
               <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
@@ -156,7 +195,7 @@ export default function Login() {
             {/* Password */}
             <div>
               <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
-                Password
+                Password (min. 6 characters)
               </label>
               <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                 <Lock size={16} style={{ position: 'absolute', left: 14, color: '#71717a', pointerEvents: 'none' }} />
@@ -190,6 +229,36 @@ export default function Login() {
               </div>
             </div>
 
+            {/* Confirm Password */}
+            <div>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+                Confirm Password
+              </label>
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                <Lock size={16} style={{ position: 'absolute', left: 14, color: '#71717a', pointerEvents: 'none' }} />
+                <input
+                  type={showPass ? 'text' : 'password'}
+                  value={form.confirmPassword}
+                  onChange={handleChange('confirmPassword')}
+                  placeholder="••••••••"
+                  required
+                  style={{
+                    width: '100%',
+                    background: '#141417',
+                    border: '1px solid #27272a',
+                    borderRadius: 12,
+                    padding: '12px 42px 12px 42px',
+                    color: '#fafafa',
+                    fontSize: 14,
+                    outline: 'none',
+                    boxSizing: 'border-box'
+                  }}
+                  onFocus={e => e.target.style.borderColor = '#6366f1'}
+                  onBlur={e => e.target.style.borderColor = '#27272a'}
+                />
+              </div>
+            </div>
+
             {/* Submit Button */}
             <button
               type="submit"
@@ -215,11 +284,11 @@ export default function Login() {
               {loading ? (
                 <>
                   <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} />
-                  <span>Signing In...</span>
+                  <span>Creating Account...</span>
                 </>
               ) : (
                 <>
-                  <span>Sign In</span>
+                  <span>Create Account</span>
                   <ArrowRight size={17} />
                 </>
               )}
@@ -227,9 +296,9 @@ export default function Login() {
           </form>
 
           <p style={{ textAlign: 'center', color: '#71717a', fontSize: 13, marginTop: 24 }}>
-            Don't have an account?{' '}
-            <Link to="/register" style={{ color: '#818cf8', fontWeight: 600, textDecoration: 'none' }}>
-              Create an account
+            Already have an account?{' '}
+            <Link to="/login" style={{ color: '#818cf8', fontWeight: 600, textDecoration: 'none' }}>
+              Sign in
             </Link>
           </p>
         </div>

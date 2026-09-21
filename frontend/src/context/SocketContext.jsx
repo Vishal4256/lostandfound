@@ -5,20 +5,24 @@ import { useAuth } from './AuthContext'
 const SocketContext = createContext(null)
 
 export const SocketProvider = ({ children }) => {
-  const { user } = useAuth()
+  const { user, token } = useAuth()
   const [socket, setSocket] = useState(null)
   const [connected, setConnected] = useState(false)
 
   useEffect(() => {
-    // In dev, connect to backend socket. Uses relative path or direct port 5000 fallback
-    const socketInstance = io(window.location.origin.includes('5173') ? 'http://localhost:5000' : window.location.origin, {
+    const socketUrl = import.meta.env.VITE_SOCKET_URL ||
+      (window.location.origin.includes('5173') ? 'http://localhost:5000' : window.location.origin)
+
+    const socketInstance = io(socketUrl, {
       transports: ['websocket', 'polling'],
       reconnectionAttempts: 5,
-      timeout: 10000
+      timeout: 10000,
+      auth: {
+        token: token || localStorage.getItem('findit_token')
+      }
     })
 
     socketInstance.on('connect', () => {
-      console.log('⚡ Socket connected:', socketInstance.id)
       setConnected(true)
       if (user?._id) {
         socketInstance.emit('join_user_room', user._id)
@@ -26,7 +30,6 @@ export const SocketProvider = ({ children }) => {
     })
 
     socketInstance.on('disconnect', () => {
-      console.log('⚡ Socket disconnected')
       setConnected(false)
     })
 
@@ -35,7 +38,7 @@ export const SocketProvider = ({ children }) => {
     return () => {
       socketInstance.disconnect()
     }
-  }, [user?._id])
+  }, [user?._id, token])
 
   return (
     <SocketContext.Provider value={{ socket, connected }}>

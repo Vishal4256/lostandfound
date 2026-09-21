@@ -3,7 +3,7 @@
 # 🧭 FindIt — AI-Powered Lost & Found Platform
 
 <p align="center">
-  <b>Reuniting lost items with their owners using Multimodal AI Visual Search and Real-Time Chat.</b>
+  <b>Reuniting lost items with their owners using Multimodal AI Visual Search, Ownership Verification, and Real-Time Chat.</b>
 </p>
 
 [![React](https://img.shields.io/badge/React-19.2-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
@@ -17,7 +17,7 @@
 
 <br />
 
-[Explore Features](#-key-features) • [Architecture](#-architecture) • [Getting Started](#-getting-started) • [Atlas Vector Search](#-mongodb-atlas-vector-search-setup) • [API Reference](#-api-endpoints)
+[Explore Features](#-key-features) • [Architecture](#-architecture) • [Getting Started](#-getting-started) • [Atlas Vector Search](#-mongodb-atlas-vector-search-setup) • [API Reference](#-api-endpoints) • [Testing](#-testing--qa)
 
 </div>
 
@@ -25,9 +25,12 @@
 
 ## 📖 Overview
 
-**FindIt** is a full-stack platform designed to revolutionize how lost property is reported, matched, and recovered. Unlike traditional lost-and-found boards that rely purely on text queries, **FindIt** leverages **local Vision-Language AI embeddings (`CLIP ViT`)** to find visual matches even when the title or description differs. 
+**FindIt** is a production-grade, full-stack platform designed to modernize how lost property is reported, visually matched, claimed, and recovered. Unlike legacy lost-and-found boards that rely purely on text keywords, **FindIt** leverages **local Vision-Language AI embeddings (`CLIP ViT-B/32`)** to find visual matches even when titles or descriptions vary completely.
 
-Once a potential match is found, users can immediately connect via **end-to-end real-time Socket.IO chat** to verify ownership and coordinate returns safely.
+Key highlights:
+- **Multimodal Search**: Supports keyword queries, structured filters (category, status, type), and direct image upload matching.
+- **Strict Verification & Claims**: Built-in claim workflow with proof submission, author-only approvals, duplicate prevention, and automatic item resolution.
+- **Secure Real-Time Communication**: Authenticated Socket.IO conversations ensuring only verified participants can access item communication rooms.
 
 ---
 
@@ -36,12 +39,13 @@ Once a potential match is found, users can immediately connect via **end-to-end 
 | Feature | Description |
 | :--- | :--- |
 | 🔍 **Multimodal Visual Search** | Upload an image to find similar lost or found items using **512-dimensional CLIP embeddings** and cosine vector similarity. |
-| ⚡ **Real-Time In-App Chat** | Integrated Socket.IO messaging with typing indicators, unread counts, and dedicated conversation rooms per listing. |
-| 🔐 **Secure Authentication** | User registration and authentication powered by **JWT (JSON Web Tokens)** and **bcryptjs** password hashing. |
-| ☁️ **Cloudinary Image Pipeline** | Fast, reliable cloud storage for high-resolution images with automated memory-stream uploads via Multer. |
-| 🏷️ **Lifecycle Status Tracking** | Dynamic listing lifecycle (`Active` ➔ `Pending Claim` ➔ `Resolved`) to prevent stale entries. |
-| 🎨 **State-of-the-Art Dark UI** | Glassmorphic dark theme built with **Tailwind CSS v4**, **Framer Motion** animations, **3D tilt card physics**, and **Sonner toasts**. |
-| 📱 **Responsive & Accessible** | Mobile-first layout featuring accessible modal dialogs powered by **Radix UI**. |
+| 🛡️ **Ownership Claim System** | Submit ownership claims with proof details/images. Item reporters can review, approve, or reject claims with automatic status updates (`Resolved`). |
+| ⚡ **Real-Time In-App Chat** | Integrated Socket.IO messaging with JWT handshake verification, active conversation listings, and dedicated rooms. |
+| 🔐 **Hardened Authentication & RBAC** | JWT-based authentication with bcryptjs hashing, sliding-window brute force rate limiting, and server-enforced role access. |
+| ☁️ **Cloudinary Media Pipeline** | Robust 10MB memory-buffered image upload pipeline with MIME filtering and automatic orphan-cleanup on failure. |
+| 🏷️ **Lifecycle Status Tracking** | Dynamic listing lifecycle (`Active` ➔ `Pending Claim` ➔ `Resolved`) ensuring transparency and preventing stale entries. |
+| 🎨 **State-of-the-Art Dark UI** | Glassmorphic dark aesthetic built with **Tailwind CSS v4**, **Framer Motion**, and **Sonner notifications**. |
+| 📱 **Responsive & Accessible** | Mobile-first layout, semantic HTML, Radix UI modals, and intuitive UX states. |
 
 ---
 
@@ -52,25 +56,26 @@ flowchart TD
     subgraph Client ["Frontend (React 19 + Vite)"]
         UI[Modern Dark UI]
         VS[Visual Search Modal]
+        ClaimsUI[Claim Review Modal]
         ChatUI[Real-time Chat Window]
     end
 
     subgraph Backend ["Backend (Express 5 + Node.js)"]
         API[Express REST API]
-        Auth[JWT Authentication]
-        WS[Socket.IO Server]
+        Auth[JWT & Rate Limiting]
+        WS[Socket.IO Server with JWT Handshake]
         CLIP["@xenova/transformers (CLIP ViT-B/32)"]
     end
 
     subgraph Cloud ["Database & Storage"]
         Mongo[("MongoDB Atlas Database")]
-        VectorIdx["Atlas $vectorSearch Index (Cosine)"]
+        VectorIdx["Atlas $vectorSearch Index (512-D Cosine)"]
         CDN[Cloudinary Media CDN]
     end
 
     %% Upload & Embedding Flow
     UI -->|Image Upload & Details| API
-    API -->|Generate 512-d Vector| CLIP
+    API -->|Generate 512-D Vector| CLIP
     API -->|Save Asset| CDN
     API -->|Store Item & Vector| Mongo
 
@@ -81,10 +86,16 @@ flowchart TD
     VectorIdx -->|Ranked Matches| API
     API -->|Ranked Results & Score| VS
 
+    %% Claims Lifecycle
+    ClaimsUI -->|Submit / Approve / Reject Claim| API
+    API -->|Update Claim & Transition Item| Mongo
+
     %% Real-time Chat
     ChatUI <-->|WebSocket Events| WS
     WS <--> Mongo
 ```
+
+For complete technical specifications, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
@@ -95,26 +106,25 @@ flowchart TD
 - **Styling**: Tailwind CSS v4, Lucide React icons
 - **Animations & Effects**: Framer Motion, `react-parallax-tilt`
 - **UI Primitives**: Radix UI Dialog, Radix UI Select
-- **Networking**: Axios, Socket.IO Client
+- **Networking**: Centralized Axios API client (`src/services/api.js`), Socket.IO Client
 - **Feedback**: Sonner (Toast notifications)
 
 ### Backend
 - **Runtime**: Node.js & Express 5
-- **AI / Embeddings**: `@xenova/transformers` (`Xenova/clip-vit-base-patch32`)
+- **AI / Embeddings**: `@xenova/transformers` (`Xenova/clip-vit-base-patch32`) generating 512-dimension vectors
 - **Database & ODM**: MongoDB Atlas & Mongoose
-- **Real-time Protocol**: Socket.IO
+- **Real-time Protocol**: Socket.IO with token-authenticated handshake
 - **Storage**: Cloudinary SDK & Multer (In-memory streaming)
-- **Security**: JWT (`jsonwebtoken`) & `bcryptjs`
+- **Security**: JWT (`jsonwebtoken`), `bcryptjs`, ReDoS-safe search, sliding-window rate limiting
 
 ---
 
 ## 🚀 Getting Started
 
 ### Prerequisites
-Make sure you have the following installed and configured:
 - [Node.js](https://nodejs.org/) (v18.x or later)
-- [MongoDB Atlas](https://www.mongodb.com/cloud/atlas) account and cluster
-- [Cloudinary](https://cloudinary.com/) account for image uploads
+- [MongoDB Atlas](https://www.mongodb.com/cloud/atlas) cluster connection string
+- [Cloudinary](https://cloudinary.com/) account for image storage
 
 ---
 
@@ -127,7 +137,7 @@ cd lostandfound
 
 ---
 
-### 2. Backend Setup
+### 2. Backend Configuration & Setup
 
 1. Navigate to the `backend` directory:
    ```bash
@@ -140,7 +150,7 @@ cd lostandfound
    ```
 
 3. Configure your environment variables:
-   Create a `.env` file in the `backend` folder (or copy `.env.example`):
+   Copy `.env.example` to `.env`:
    ```bash
    cp .env.example .env
    ```
@@ -148,22 +158,22 @@ cd lostandfound
    Fill in your credentials:
    ```env
    PORT=5000
-   MONGO_URI=your_mongodb_atlas_connection_string
+   MONGO_URI=mongodb+srv://<username>:<password>@cluster0.mongodb.net/lost-and-found?retryWrites=true&w=majority
+   JWT_SECRET=your_super_secret_jwt_key
    CLOUDINARY_CLOUD_NAME=your_cloudinary_cloud_name
    CLOUDINARY_API_KEY=your_cloudinary_api_key
    CLOUDINARY_API_SECRET=your_cloudinary_api_secret
-   JWT_SECRET=your_super_secret_jwt_key
    ```
 
 4. Start the backend server:
    ```bash
    npm start
    ```
-   > 💡 *Note: On first startup, the local CLIP model will be downloaded and cached automatically.*
+   > 💡 *Note: On first boot, the local CLIP ViT-B/32 ONNX model is automatically downloaded and cached.*
 
 ---
 
-### 3. Frontend Setup
+### 3. Frontend Configuration & Setup
 
 1. Open a new terminal and navigate to the `frontend` directory:
    ```bash
@@ -175,12 +185,19 @@ cd lostandfound
    npm install
    ```
 
-3. Start the development server:
+3. Configure frontend environment variables:
+   Create `frontend/.env` (or review `frontend/.env.example`):
+   ```env
+   VITE_API_URL=http://localhost:5000/api
+   VITE_SOCKET_URL=http://localhost:5000
+   ```
+
+4. Start the development server:
    ```bash
    npm run dev
    ```
 
-4. Open your browser and navigate to:
+5. Open your browser and navigate to:
    ```text
    http://localhost:5173
    ```
@@ -189,9 +206,9 @@ cd lostandfound
 
 ## 🗄️ MongoDB Atlas Vector Search Setup
 
-To enable Atlas Vector Search for instant cosine visual matching:
+To enable Atlas Vector Search for sub-second cosine visual matching:
 
-1. In the **MongoDB Atlas Console**, go to your cluster and click **Search and Vector Search**.
+1. In the **MongoDB Atlas Console**, navigate to your cluster and click **Search and Vector Search**.
 2. Click **Create Search Index** ➔ Select **JSON Editor**.
 3. Select your database (e.g., `lost-and-found`) and collection (`items`).
 4. Set the **Index Name** to: `vector_index`.
@@ -207,7 +224,7 @@ To enable Atlas Vector Search for instant cosine visual matching:
       "type": "vector"
     },
     {
-      "path": "type",
+      "path": "itemType",
       "type": "filter"
     },
     {
@@ -223,11 +240,13 @@ To enable Atlas Vector Search for instant cosine visual matching:
 ```
 
 6. Click **Create Search Index**.
-*(If the index is not yet built, the backend will automatically fallback to an in-memory cosine similarity engine seamlessly!)*
+*(Note: If the Atlas Vector Index is not yet provisioned, the backend automatically falls back to an exact in-memory cosine similarity engine seamlessly!)*
 
 ---
 
 ## 📡 API Endpoints
+
+For comprehensive request/response payloads and error codes, refer to [API_DOCUMENTATION.md](API_DOCUMENTATION.md).
 
 ### 🔑 Authentication
 | Method | Endpoint | Description | Auth Required |
@@ -239,11 +258,20 @@ To enable Atlas Vector Search for instant cosine visual matching:
 ### 📦 Items & Visual Search
 | Method | Endpoint | Description | Auth Required |
 | :--- | :--- | :--- | :---: |
-| `GET` | `/api/items` | Fetch all items (supports `?category=`, `?type=`, `?mine=true`) | ❌ / Optional |
+| `GET` | `/api/items` | Fetch paginated items (supports `?category=`, `?itemType=`, `?status=`, `?search=`, `?mine=true`) | ❌ / Optional |
 | `GET` | `/api/items/:id` | Get detailed item information by ID | ❌ |
 | `POST` | `/api/items` | Create a new Lost/Found report with image & AI embedding | ✅ |
 | `POST` | `/api/items/search` | Search items visually by uploading an image | ❌ |
 | `PATCH` | `/api/items/:id/status` | Update item status (`Active`, `Pending Claim`, `Resolved`) | ✅ |
+| `DELETE`| `/api/items/:id` | Delete item (Reporter or Admin only) | ✅ |
+
+### 🛡️ Claims Management
+| Method | Endpoint | Description | Auth Required |
+| :--- | :--- | :--- | :---: |
+| `POST` | `/api/claims` | Submit an ownership claim for an item | ✅ |
+| `GET` | `/api/claims/my-claims` | Get all claims submitted by current user | ✅ |
+| `GET` | `/api/claims/item/:itemId` | Get claims for an item (Reporter or Admin only) | ✅ |
+| `PATCH` | `/api/claims/:id/status` | Approve or reject a claim (Reporter only) | ✅ |
 
 ### 💬 Real-Time Chat & Conversations
 | Method | Endpoint | Description | Auth Required |
@@ -253,11 +281,18 @@ To enable Atlas Vector Search for instant cosine visual matching:
 | `GET` | `/api/chat/conversations/:id/messages` | Fetch message history for a conversation | ✅ |
 | `POST` | `/api/chat/conversations/:id/messages` | Post a new message to conversation | ✅ |
 
-### 🔌 Socket.IO Events
-- `join_user_room` — Joins the user's private notification channel.
-- `join_conversation` / `leave_conversation` — Room subscription for live chats.
-- `send_message` / `receive_message` — Real-time chat message broadcast.
-- `typing` / `user_typing` — Live typing indicator notifications.
+---
+
+## 🧪 Testing & QA
+
+Run the automated test suite covering Authentication, Item Flow, AI Vector Pipeline, Claim Security, and Chat Permissions:
+
+```bash
+# In backend/
+node test_full_audit_suite.js
+```
+
+Detailed test procedures and verification matrices are available in [TESTING.md](TESTING.md).
 
 ---
 
@@ -266,43 +301,38 @@ To enable Atlas Vector Search for instant cosine visual matching:
 ```text
 lostandfound/
 ├── backend/
-│   ├── controllers/            # Route controllers (auth, items, chat)
-│   ├── middleware/             # JWT auth & validation middlewares
-│   ├── models/                 # Mongoose schemas (User, Item, Conversation, Message)
+│   ├── config/                 # Cloudinary & DB configurations
+│   ├── controllers/            # Route controllers (auth, items, claims, chat)
+│   ├── middleware/             # JWT auth, RBAC, Multer upload, rate limiter
+│   ├── models/                 # Mongoose schemas (User, Item, Claim, Conversation, Message)
+│   ├── routes/                 # Express route definitions
 │   ├── services/               # CLIP AI embedding generation service
+│   ├── test_full_audit_suite.js# Full automated end-to-end audit test suite
 │   ├── .env.example            # Environment variables template
 │   ├── package.json            # Node.js dependencies & scripts
 │   └── server.js               # Express app & Socket.io server bootstrap
 │
 ├── frontend/
 │   ├── src/
-│   │   ├── components/         # Reusable UI components & modals
+│   │   ├── components/         # Reusable UI components, modals, feeds
 │   │   │   ├── layout/         # Navbar, layout wrapper
 │   │   │   ├── CreateListingModal.jsx
 │   │   │   ├── MatchResultsGrid.jsx
 │   │   │   └── VisualSearchModal.jsx
 │   │   ├── context/            # React AuthContext & SocketContext
-│   │   ├── pages/              # Route pages (Home, AddItem, ItemDetail, Login, Profile)
+│   │   ├── pages/              # Route pages (Home, SubmitItem, ItemDetail, Dashboard, Login, Register)
+│   │   ├── services/           # Centralized Axios API client (api.js)
 │   │   ├── App.jsx             # Routes & Providers
 │   │   └── index.css           # Global theme variables & Tailwind styles
 │   ├── index.html              # HTML entry template
 │   ├── package.json            # Frontend dependencies & scripts
 │   └── vite.config.js          # Vite build configuration
 │
+├── API_DOCUMENTATION.md        # Comprehensive REST & WebSocket API specification
+├── ARCHITECTURE.md             # System architecture, CLIP pipeline & security design
+├── TESTING.md                  # Test suites, scenarios & execution instructions
 └── README.md                   # Project documentation
 ```
-
----
-
-## 🤝 Contributing
-
-Contributions, issues, and feature requests are welcome!
-
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
 
 ---
 

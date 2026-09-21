@@ -1,5 +1,5 @@
-import { createContext, useContext, useState, useEffect } from 'react'
-import axios from 'axios'
+import { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import api from '../services/api'
 
 const AuthContext = createContext(null)
 
@@ -15,34 +15,37 @@ export const AuthProvider = ({ children }) => {
   const [token, setToken] = useState(() => localStorage.getItem('findit_token') || null)
   const [loading, setLoading] = useState(true)
 
-  // Configure axios interceptor to attach Bearer token
+  // Synchronize token state with API client
   useEffect(() => {
-    const interceptor = axios.interceptors.request.use((config) => {
-      const savedToken = localStorage.getItem('findit_token')
-      if (savedToken) {
-        config.headers.Authorization = `Bearer ${savedToken}`
-      }
-      return config
-    })
+    if (token) {
+      api.defaults.headers.common['Authorization'] = `Bearer ${token}`
+    } else {
+      delete api.defaults.headers.common['Authorization']
+    }
+  }, [token])
 
-    return () => axios.interceptors.request.eject(interceptor)
+  const logout = useCallback(() => {
+    setToken(null)
+    setUser(null)
+    localStorage.removeItem('findit_token')
+    localStorage.removeItem('findit_user')
+    delete api.defaults.headers.common['Authorization']
   }, [])
 
-  // Verify stored token on mount
+  // Verify stored token on initial mount
   useEffect(() => {
     const verifyToken = async () => {
       const savedToken = localStorage.getItem('findit_token')
       if (savedToken) {
         try {
-          const { data } = await axios.get('/api/auth/me', {
-            headers: { Authorization: `Bearer ${savedToken}` }
-          })
+          const { data } = await api.get('/api/auth/me')
           if (data.success && data.user) {
             setUser(data.user)
             localStorage.setItem('findit_user', JSON.stringify(data.user))
+          } else {
+            logout()
           }
         } catch {
-          // Token expired or invalid
           logout()
         }
       }
@@ -50,41 +53,45 @@ export const AuthProvider = ({ children }) => {
     }
 
     verifyToken()
-  }, [])
+  }, [logout])
 
   const login = async (email, password) => {
-    const { data } = await axios.post('/api/auth/login', { email, password })
+    const { data } = await api.post('/api/auth/login', { email, password })
     if (data.success && data.token) {
       setToken(data.token)
       setUser(data.user)
       localStorage.setItem('findit_token', data.token)
       localStorage.setItem('findit_user', JSON.stringify(data.user))
+      api.defaults.headers.common['Authorization'] = `Bearer ${data.token}`
       return data.user
     }
     throw new Error(data.message || 'Login failed')
   }
 
   const register = async (name, email, password) => {
-    const { data } = await axios.post('/api/auth/register', { name, email, password })
+    const { data } = await api.post('/api/auth/register', { name, email, password })
     if (data.success && data.token) {
       setToken(data.token)
       setUser(data.user)
       localStorage.setItem('findit_token', data.token)
       localStorage.setItem('findit_user', JSON.stringify(data.user))
+      api.defaults.headers.common['Authorization'] = `Bearer ${data.token}`
       return data.user
     }
     throw new Error(data.message || 'Registration failed')
   }
 
-  const logout = () => {
-    setToken(null)
-    setUser(null)
-    localStorage.removeItem('findit_token')
-    localStorage.removeItem('findit_user')
-  }
-
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, register, logout, isAuthenticated: !!token }}>
+    <AuthContext.Provider value={{
+      user,
+      token,
+      loading,
+      login,
+      register,
+      logout,
+      setUser,
+      isAuthenticated: !!token
+    }}>
       {children}
     </AuthContext.Provider>
   )
