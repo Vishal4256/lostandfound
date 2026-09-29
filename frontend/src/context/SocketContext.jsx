@@ -33,6 +33,7 @@ export const SocketProvider = ({ children }) => {
       setConnected(false)
     })
 
+    // eslint-disable-next-line react/set-state-in-effect
     setSocket(socketInstance)
 
     return () => {
@@ -47,6 +48,7 @@ export const SocketProvider = ({ children }) => {
   )
 }
 
+// eslint-disable-next-line react/only-export-components
 export const useSocket = () => {
   return useContext(SocketContext)
 }

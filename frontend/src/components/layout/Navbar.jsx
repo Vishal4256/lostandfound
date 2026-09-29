@@ -1,21 +1,29 @@
 import { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { motion, AnimatePresence } from 'framer-motion'
-import { Plus, LayoutGrid, User, Menu, X, MapPin, LogOut, LogIn, UserPlus } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 
-const Navbar = () => {
-  const [open, setOpen] = useState(false)
-  const [profileDropdown, setProfileDropdown] = useState(false)
+export default function Navbar() {
   const { pathname } = useLocation()
   const navigate = useNavigate()
   const { user, isAuthenticated, logout } = useAuth()
-  const active = (p) => pathname === p
+  const [profileDropdown, setProfileDropdown] = useState(false)
+  const [mobileMenu, setMobileMenu] = useState(false)
+  const [globalSearch, setGlobalSearch] = useState('')
 
-  const links = [
-    { to: '/', label: 'Browse Feed', icon: LayoutGrid },
-    { to: '/dashboard', label: 'Dashboard', icon: User, protected: true }
-  ]
+  // Close dropdowns on route change without cascading effect render
+  const [prevPathname, setPrevPathname] = useState(pathname)
+  if (prevPathname !== pathname) {
+    setPrevPathname(pathname)
+    setProfileDropdown(false)
+    setMobileMenu(false)
+  }
+
+  const handleSearchSubmit = (e) => {
+    e.preventDefault()
+    if (globalSearch.trim()) {
+      navigate(`/?search=${encodeURIComponent(globalSearch.trim())}`)
+    }
+  }
 
   const handleLogout = () => {
     logout()
@@ -27,208 +35,244 @@ const Navbar = () => {
 
   return (
     <>
-      <header style={{
-        position: 'sticky', top: 0, zIndex: 50,
-        background: 'rgba(9, 9, 11, 0.85)',
-        backdropFilter: 'blur(20px)',
-        borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-      }}>
-        <div style={{ maxWidth: 1280, margin: '0 auto', padding: '0 24px', display: 'flex', alignItems: 'center', height: 64, gap: 28 }}>
-          {/* Brand Logo */}
-          <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
-            <div style={{
-              width: 34, height: 34, borderRadius: 10,
-              background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: '0 4px 12px rgba(99, 102, 241, 0.35)'
-            }}>
-              <MapPin size={18} color="white" strokeWidth={2.5} />
-            </div>
-            <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 800, fontSize: 18, color: '#fafafa', letterSpacing: '-0.03em' }}>
-              FindIt <span style={{ fontSize: 11, fontWeight: 700, color: '#818cf8', background: 'rgba(99, 102, 241, 0.15)', padding: '2px 6px', borderRadius: 6 }}>AI</span>
+      {/* Live Civic Broadcast Banner */}
+      <aside className="w-full bg-primary text-on-primary py-1.5 px-4 z-50 border-b border-primary-container text-body-sm font-body-sm">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-3 overflow-hidden">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-secondary text-on-secondary text-label-sm font-label-sm shrink-0">
+              <span className="w-1.5 h-1.5 rounded-full bg-secondary-fixed animate-pulse"></span>
+              CIVIC DISPATCH
             </span>
-          </Link>
+            <p className="truncate text-surface-container-high text-body-sm font-body-sm">
+              <span className="font-semibold text-on-primary">Municipal Registry Active</span>: Report lost belongings &amp; coordinate secure custody verification
+            </p>
+          </div>
+          <div className="hidden sm:flex items-center gap-6 text-inverse-primary text-body-sm font-body-sm shrink-0">
+            <span className="flex items-center gap-1">
+              <span className="material-symbols-outlined text-secondary-fixed-dim text-[16px] material-symbols-filled">verified_user</span>
+              256-Bit Encrypted Privacy Shield
+            </span>
+            <span className="text-outline">|</span>
+            <span className="flex items-center gap-1 font-label-sm text-label-sm">
+              <span className="material-symbols-outlined text-[15px]">call</span>
+              Civic Dispatch: 1-800-555-0192
+            </span>
+          </div>
+        </div>
+      </aside>
 
-          {/* Desktop Navigation Links */}
-          <nav style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }} className="hidden-mobile">
-            {links.map(({ to, label, protected: isProt }) => {
-              if (isProt && !isAuthenticated) return null
-              return (
-                <Link key={to} to={to} style={{
-                  padding: '7px 14px', borderRadius: 10, fontSize: 14, fontWeight: 600,
-                  color: active(to) ? '#fafafa' : '#a1a1aa',
-                  background: active(to) ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
-                  textDecoration: 'none', transition: 'all 0.15s'
-                }}>
-                  {label}
-                </Link>
-              )
-            })}
-          </nav>
+      {/* Main Header */}
+      <header className="sticky top-0 z-40 bg-surface-container-lowest/95 backdrop-blur-md border-b border-outline-variant shadow-xs transition-all duration-200">
+        <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 md:px-12 flex items-center justify-between h-16">
+          {/* Brand Logo */}
+          <div className="flex items-center gap-6 md:gap-8">
+            <Link to="/" className="flex items-center gap-2.5 group">
+              <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center text-secondary-fixed shadow-sm group-hover:scale-105 transition-transform">
+                <span className="material-symbols-outlined text-secondary-fixed text-[22px] material-symbols-filled">travel_explore</span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-headline-sm font-headline-sm font-bold text-primary tracking-tight leading-tight">HavenFind</span>
+                <span className="text-label-sm font-label-sm text-outline -mt-0.5 tracking-wider text-[10px]">CIVIC NETWORK</span>
+              </div>
+            </Link>
 
-          {/* Action Area */}
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
-            <button
-              onClick={() => navigate('/submit-item')}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 7,
-                padding: '8px 18px', borderRadius: 12,
-                background: 'linear-gradient(135deg, #6366f1, #4f46e5)', color: 'white',
-                border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 13,
-                boxShadow: '0 4px 14px rgba(99, 102, 241, 0.35)',
-                transition: 'all 0.15s'
-              }}
-              onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-1px)'}
-              onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
+            {/* Desktop Navigation */}
+            <nav aria-label="Global Primary Navigation" className="hidden lg:flex items-center gap-6 ml-2">
+              <Link
+                to="/"
+                className={`flex items-center gap-1.5 transition-colors font-medium text-body-md ${
+                  pathname === '/'
+                    ? 'border-b-2 border-primary text-primary font-semibold pb-0.5'
+                    : 'text-on-surface-variant hover:text-primary'
+                }`}
+              >
+                <span className="material-symbols-outlined text-body-md">grid_view</span>
+                Directory
+              </Link>
+              <Link
+                to="/dashboard"
+                className={`flex items-center gap-1.5 transition-colors font-medium text-body-md ${
+                  pathname === '/dashboard' || pathname === '/profile'
+                    ? 'border-b-2 border-primary text-primary font-semibold pb-0.5'
+                    : 'text-on-surface-variant hover:text-primary'
+                }`}
+              >
+                <span className="material-symbols-outlined text-body-md">badge</span>
+                {isAuthenticated ? 'My Registry Desk' : 'Verification Desk'}
+              </Link>
+              <a
+                href="/#how-it-works"
+                className="text-on-surface-variant hover:text-primary transition-colors flex items-center gap-1.5 text-body-md"
+              >
+                <span className="material-symbols-outlined text-outline text-body-md">psychology_alt</span>
+                How It Works
+              </a>
+            </nav>
+          </div>
+
+          {/* Search bar in center/left for tablet/desktop */}
+          <div className="hidden md:flex items-center flex-1 max-w-xs lg:max-w-sm mx-4">
+            <form onSubmit={handleSearchSubmit} className="relative w-full">
+              <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-outline">
+                <span className="material-symbols-outlined text-[18px]">search</span>
+              </span>
+              <input
+                type="text"
+                value={globalSearch}
+                onChange={(e) => setGlobalSearch(e.target.value)}
+                placeholder="Search case #, item, precinct..."
+                className="w-full pl-9 pr-12 py-1.5 bg-surface border border-outline-variant rounded-xl font-body-sm text-body-sm text-on-surface placeholder:text-outline focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+              />
+              <span className="absolute inset-y-0 right-0 pr-2.5 flex items-center pointer-events-none">
+                <kbd className="bg-surface-container border border-outline-variant rounded px-1.5 text-[10px] font-label-sm text-outline">⌘K</kbd>
+              </span>
+            </form>
+          </div>
+
+          {/* Action Clustered Controls */}
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Primary Action: Report an Item */}
+            <Link
+              to="/submit-item"
+              className="inline-flex items-center gap-2 bg-primary hover:bg-primary-container text-on-primary px-3.5 sm:px-4 py-2 rounded-xl font-semibold text-body-sm sm:text-body-md shadow-xs active:scale-[0.98] transition-all"
             >
-              <Plus size={16} strokeWidth={2.5} />
-              Report Item
-            </button>
+              <span className="material-symbols-outlined text-secondary-fixed text-body-md">add_circle</span>
+              <span className="hidden xs:inline">Report Item</span>
+              <span className="xs:hidden">Report</span>
+            </Link>
 
-            {/* Auth Section */}
+            {/* Auth Button or User Menu */}
             {isAuthenticated ? (
-              <div style={{ position: 'relative' }}>
+              <div className="relative">
                 <button
-                  onClick={() => setProfileDropdown(v => !v)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 9,
-                    background: '#18181b', border: '1px solid #27272a',
-                    borderRadius: 999, padding: '4px 12px 4px 5px',
-                    cursor: 'pointer', color: '#fafafa'
-                  }}
+                  onClick={() => setProfileDropdown((v) => !v)}
+                  className="flex items-center gap-2 p-1 pl-2 rounded-full border border-outline-variant bg-surface-container-lowest hover:bg-surface-container transition-colors"
+                  aria-label="User Account Menu"
                 >
-                  <div style={{
-                    width: 28, height: 28, borderRadius: '50%',
-                    background: 'linear-gradient(135deg, #6366f1, #4f46e5)', color: 'white',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontWeight: 700, fontSize: 12
-                  }}>
+                  <span className="text-body-sm font-semibold text-primary hidden sm:inline max-w-[100px] truncate">
+                    {user?.name || 'Member'}
+                  </span>
+                  <div className="w-8 h-8 rounded-full bg-primary text-secondary-fixed font-bold text-label-md flex items-center justify-center shadow-xs">
                     {userInitial}
                   </div>
-                  <span style={{ fontSize: 13, fontWeight: 600, maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {user?.name || 'Account'}
-                  </span>
                 </button>
 
-                <AnimatePresence>
-                  {profileDropdown && (
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.95, y: 6 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.95, y: 6 }}
-                      style={{
-                        position: 'absolute', right: 0, top: '100%', marginTop: 8,
-                        background: '#121216', border: '1px solid #27272a',
-                        borderRadius: 16, padding: 6, minWidth: 190,
-                        boxShadow: '0 15px 40px rgba(0,0,0,0.6)', zIndex: 60
-                      }}
+                {profileDropdown && (
+                  <div className="absolute right-0 mt-2 w-56 rounded-2xl bg-surface-container-lowest border border-outline-variant shadow-xl p-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+                    <div className="px-3 py-2 border-b border-outline-variant/60 mb-1">
+                      <p className="text-body-sm font-bold text-primary truncate">{user?.name}</p>
+                      <p className="text-label-sm font-label-sm text-outline truncate">{user?.email}</p>
+                      <span className="inline-block mt-1 px-2 py-0.5 rounded bg-secondary-container text-on-secondary-fixed-variant text-[10px] font-label-sm font-bold">
+                        {user?.role === 'admin' ? 'CIVIC ADMINISTRATOR' : 'VERIFIED CITIZEN'}
+                      </span>
+                    </div>
+
+                    <Link
+                      to="/dashboard"
+                      className="flex items-center gap-2.5 px-3 py-2 text-body-sm font-medium text-primary hover:bg-surface-container rounded-lg transition-colors"
                     >
-                      <div style={{ padding: '8px 12px', borderBottom: '1px solid #27272a', marginBottom: 4 }}>
-                        <p style={{ fontSize: 13, fontWeight: 700, color: '#fafafa', margin: 0 }}>{user?.name}</p>
-                        <p style={{ fontSize: 11, color: '#71717a', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.email}</p>
-                      </div>
-                      <Link
-                        to="/dashboard"
-                        onClick={() => setProfileDropdown(false)}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 8,
-                          padding: '8px 12px', borderRadius: 8, fontSize: 13,
-                          color: '#fafafa', textDecoration: 'none', fontWeight: 500
-                        }}
-                        onMouseEnter={e => e.currentTarget.style.background = '#1e1e24'}
-                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                      >
-                        <User size={14} /> My Dashboard
-                      </Link>
-                      <button
-                        onClick={handleLogout}
-                        style={{
-                          width: '100%', display: 'flex', alignItems: 'center', gap: 8,
-                          padding: '8px 12px', borderRadius: 8, fontSize: 13,
-                          color: '#ef4444', background: 'none', border: 'none',
-                          cursor: 'pointer', textAlign: 'left', fontWeight: 500
-                        }}
-                        onMouseEnter={e => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'}
-                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                      >
-                        <LogOut size={14} /> Sign Out
-                      </button>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                      <span className="material-symbols-outlined text-body-md">dashboard</span>
+                      Registry Dashboard
+                    </Link>
+                    <Link
+                      to="/profile"
+                      className="flex items-center gap-2.5 px-3 py-2 text-body-sm font-medium text-primary hover:bg-surface-container rounded-lg transition-colors"
+                    >
+                      <span className="material-symbols-outlined text-body-md">account_circle</span>
+                      Civic Profile &amp; Badges
+                    </Link>
+                    <Link
+                      to="/submit-item"
+                      className="flex items-center gap-2.5 px-3 py-2 text-body-sm font-medium text-primary hover:bg-surface-container rounded-lg transition-colors"
+                    >
+                      <span className="material-symbols-outlined text-body-md">add_box</span>
+                      File New Case Report
+                    </Link>
+
+                    <div className="border-t border-outline-variant/60 my-1"></div>
+
+                    <button
+                      onClick={handleLogout}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-body-sm font-medium text-error hover:bg-error-container/40 rounded-lg transition-colors text-left"
+                    >
+                      <span className="material-symbols-outlined text-body-md">logout</span>
+                      Sign Out
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div className="flex items-center gap-1.5 sm:gap-2">
                 <Link
                   to="/login"
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 6,
-                    padding: '7px 14px', borderRadius: 10,
-                    background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)',
-                    color: '#fafafa', textDecoration: 'none', fontSize: 13, fontWeight: 600
-                  }}
+                  className="px-3 py-2 text-body-sm font-semibold text-primary hover:bg-surface-container rounded-xl transition-colors"
                 >
-                  <LogIn size={15} /> Sign In
+                  Sign In
                 </Link>
                 <Link
                   to="/register"
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 6,
-                    padding: '7px 14px', borderRadius: 10,
-                    background: 'rgba(99, 102, 241, 0.15)', border: '1px solid rgba(99, 102, 241, 0.3)',
-                    color: '#818cf8', textDecoration: 'none', fontSize: 13, fontWeight: 600
-                  }}
+                  className="hidden sm:inline-flex px-3.5 py-2 text-body-sm font-semibold bg-surface-container-low hover:bg-surface-container border border-outline-variant text-primary rounded-xl transition-colors"
                 >
-                  <UserPlus size={15} /> Register
+                  Register
                 </Link>
               </div>
             )}
 
-            <button onClick={() => setOpen(v => !v)} style={{ display: 'none', background: 'none', border: 'none', color: '#a1a1aa', cursor: 'pointer', padding: 6 }} className="show-mobile">
-              {open ? <X size={22} /> : <Menu size={22} />}
+            {/* Mobile Menu Toggle */}
+            <button
+              onClick={() => setMobileMenu((v) => !v)}
+              className="p-2 rounded-lg text-primary hover:bg-surface-container lg:hidden"
+              aria-label="Toggle Navigation Menu"
+            >
+              <span className="material-symbols-outlined text-body-lg">
+                {mobileMenu ? 'close' : 'menu'}
+              </span>
             </button>
           </div>
         </div>
-      </header>
 
-      <style>{`
-        @media (max-width: 640px) {
-          .hidden-mobile { display: none !important; }
-          .show-mobile { display: flex !important; }
-        }
-      `}</style>
-
-      {/* Mobile Menu Dropdown */}
-      <AnimatePresence>
-        {open && (
-          <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
-            style={{ position: 'fixed', top: 64, left: 0, right: 0, zIndex: 49, background: '#121216', borderBottom: '1px solid #27272a', padding: '16px 24px' }}>
-            <Link to="/" onClick={() => setOpen(false)} style={{
-              display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderRadius: 10,
-              color: '#fafafa', textDecoration: 'none', fontWeight: 600, fontSize: 15, marginBottom: 6
-            }}>
-              <LayoutGrid size={18} /> Browse Feed
+        {/* Mobile Navigation Drawer */}
+        {mobileMenu && (
+          <div className="lg:hidden border-t border-outline-variant bg-surface-container-lowest p-4 space-y-3 shadow-lg">
+            <form onSubmit={handleSearchSubmit} className="relative w-full mb-3">
+              <input
+                type="text"
+                value={globalSearch}
+                onChange={(e) => setGlobalSearch(e.target.value)}
+                placeholder="Search case #, item..."
+                className="w-full pl-9 pr-4 py-2 bg-surface border border-outline-variant rounded-xl text-body-sm text-on-surface"
+              />
+              <span className="material-symbols-outlined text-[18px] text-outline absolute left-3 top-2.5">search</span>
+            </form>
+            <Link to="/" className="block py-2 text-body-md font-medium text-primary">
+              Directory Feed
             </Link>
-            {isAuthenticated && (
-              <Link to="/dashboard" onClick={() => setOpen(false)} style={{
-                display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderRadius: 10,
-                color: '#fafafa', textDecoration: 'none', fontWeight: 600, fontSize: 15, marginBottom: 6
-              }}>
-                <User size={18} /> My Dashboard
-              </Link>
+            <Link to="/dashboard" className="block py-2 text-body-md font-medium text-primary">
+              My Registry Desk
+            </Link>
+            <Link to="/submit-item" className="block py-2 text-body-md font-medium text-secondary font-semibold">
+              + Report Lost or Found Item
+            </Link>
+            {!isAuthenticated ? (
+              <div className="pt-3 border-t border-outline-variant flex gap-2">
+                <Link to="/login" className="flex-1 text-center py-2 rounded-xl bg-primary text-on-primary font-semibold text-body-sm">
+                  Sign In
+                </Link>
+                <Link to="/register" className="flex-1 text-center py-2 rounded-xl border border-outline-variant text-primary font-semibold text-body-sm">
+                  Register
+                </Link>
+              </div>
+            ) : (
+              <button
+                onClick={handleLogout}
+                className="block w-full text-left py-2 text-body-sm font-medium text-error"
+              >
+                Sign Out
+              </button>
             )}
-            <Link to="/submit-item" onClick={() => setOpen(false)} style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              padding: '12px 14px', borderRadius: 12, background: 'linear-gradient(135deg, #6366f1, #4f46e5)', color: 'white',
-              textDecoration: 'none', fontWeight: 700, fontSize: 15, marginTop: 10
-            }}>
-              <Plus size={18} /> Report Item
-            </Link>
-          </motion.div>
+          </div>
         )}
-      </AnimatePresence>
+      </header>
     </>
   )
 }
-
-export default Navbar

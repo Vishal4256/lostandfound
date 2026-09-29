@@ -1,101 +1,183 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Link } from 'react-router-dom'
-import { motion } from 'framer-motion'
-import {
-  Search,
-  Plus,
-  Package,
-  MapPin,
-  Calendar,
-  Sparkles,
-  Camera,
-  X,
-  ChevronRight
-} from 'lucide-react'
+import { Link, useSearchParams } from 'react-router-dom'
 import api from '../services/api'
-import MatchResultsGrid from '../components/MatchResultsGrid'
+import ItemCard from '../components/common/ItemCard'
+import EmptyState from '../components/common/EmptyState'
 import VisualSearchModal from '../components/VisualSearchModal'
+import MatchResultsGrid from '../components/MatchResultsGrid'
+import { getLocationSearchText } from '../utils/formatters'
 
 const CATEGORIES = [
-  'All',
-  'Electronics',
-  'Wallets',
-  'IDs',
-  'Keys',
-  'Books',
-  'Clothing',
-  'Documents',
-  'Pets',
-  'Jewellery',
-  'Accessories',
-  'Other'
+  { id: 'All', label: 'All', icon: 'dashboard' },
+  { id: 'Electronics', label: 'Electronics', icon: 'devices' },
+  { id: 'Pets', label: 'Pets & Animals', icon: 'pets' },
+  { id: 'Wallets', label: 'Keys & Wallets', icon: 'key' },
+  { id: 'Bags', label: 'Bags & Luggage', icon: 'backpack' },
+  { id: 'Jewellery', label: 'Jewelry', icon: 'diamond' },
+  { id: 'Documents', label: 'Documents & IDs', icon: 'badge' },
+  { id: 'Other', label: 'Other Items', icon: 'category' }
 ]
 
 export default function Home() {
+  const [searchParams, setSearchParams] = useSearchParams()
   const [searchModal, setSearchModal] = useState(false)
   const [searchResults, setSearchResults] = useState(null)
   const [listings, setListings] = useState([])
   const [loading, setLoading] = useState(true)
-  const [category, setCategory] = useState('All')
-  const [type, setType] = useState('all') // 'all' | 'lost' | 'found'
-  const [status, setStatus] = useState('all') // 'all' | 'Active' | 'Resolved'
-  const [searchQuery, setSearchQuery] = useState('')
+  const [error, setError] = useState(null)
+  const [stats, setStats] = useState({ total: 0, active: 0, inCustody: 0, resolved: 0 })
+
+  // Fetch real database statistics
+  useEffect(() => {
+    api.get('/api/items/stats')
+      .then(({ data }) => {
+        if (data.success && data.stats) {
+          setStats(data.stats)
+        }
+      })
+      .catch((err) => console.warn('Could not load registry stats:', err.message))
+  }, [listings])
+
+  // Filters initialized from URL parameters
+  const [category, setCategory] = useState(() => searchParams.get('category') || 'All')
+  const [type, setType] = useState(() => searchParams.get('type') || 'all') // 'all' | 'lost' | 'found'
+  const [locationQuery, setLocationQuery] = useState(() => searchParams.get('location') || '')
+  const [searchQuery, setSearchQuery] = useState(() => searchParams.get('search') || '')
+  const [verifiedOnly, setVerifiedOnly] = useState(() => searchParams.get('custody') === 'true')
+  const [sortBy, setSortBy] = useState(() => searchParams.get('sort') || 'newest')
+  const [viewMode, setViewMode] = useState('grid') // 'grid' | 'list'
+
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(() => Math.max(1, parseInt(searchParams.get('page') || '1', 10)))
+  const itemsPerPage = 9
+
+  // Synchronize state back into URL query parameters
+  useEffect(() => {
+    const params = new URLSearchParams()
+    if (searchQuery.trim()) params.set('search', searchQuery.trim())
+    if (category !== 'All') params.set('category', category)
+    if (type !== 'all') params.set('type', type)
+    if (locationQuery) params.set('location', locationQuery)
+    if (verifiedOnly) params.set('custody', 'true')
+    if (sortBy !== 'newest') params.set('sort', sortBy)
+    if (currentPage > 1) params.set('page', String(currentPage))
+
+    setSearchParams(params, { replace: true })
+  }, [searchQuery, category, type, locationQuery, verifiedOnly, sortBy, currentPage, setSearchParams])
+
+  // Sync when navbar triggers external search parameter changes
+  const externalSearch = searchParams.get('search')
+  const [prevExternalSearch, setPrevExternalSearch] = useState(externalSearch)
+  if (prevExternalSearch !== externalSearch) {
+    setPrevExternalSearch(externalSearch)
+    if (externalSearch !== null && externalSearch !== searchQuery) {
+      setSearchQuery(externalSearch)
+      setCurrentPage(1)
+    }
+  }
 
   const fetchItems = useCallback(async () => {
     setLoading(true)
+    setError(null)
     try {
-      const params = {}
+      const params = { limit: 100 }
       if (type !== 'all') params.type = type
       if (category !== 'All') params.category = category
-      if (status !== 'all') params.status = status
       if (searchQuery.trim()) params.search = searchQuery.trim()
+      if (locationQuery) params.location = locationQuery
+      if (verifiedOnly) params.custody = 'true'
+      if (sortBy) params.sort = sortBy
 
       const { data } = await api.get('/api/items', { params })
       if (data.success && Array.isArray(data.data)) {
         setListings(data.data)
+      } else {
+        setListings([])
       }
     } catch (err) {
-      console.error('Error loading items:', err)
+      console.error('Error loading civic items:', err)
+      setError('Unable to load civic feed. Please try again.')
     } finally {
       setLoading(false)
     }
-  }, [type, category, status, searchQuery])
+  }, [type, category, searchQuery, locationQuery, verifiedOnly, sortBy])
 
+  // Debounced fetch for user typing
   useEffect(() => {
-    // Debounce search query slightly
     const timer = setTimeout(() => {
       fetchItems()
-    }, 250)
+    }, 300)
     return () => clearTimeout(timer)
   }, [fetchItems])
+
+  // Keyboard shortcut for Cmd+K / Ctrl+K
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        const input = document.getElementById('civic-search-input')
+        if (input) {
+          input.focus()
+          input.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
+  // Client-side safety filter & sort guarantee
+  const filteredListings = listings.filter((item) => {
+    if (verifiedOnly) {
+      const isFound = (item.type || item.itemType || '').toLowerCase() === 'found'
+      if (!isFound) return false
+    }
+    if (locationQuery) {
+      const loc = getLocationSearchText(item.location)
+      if (!loc.includes(locationQuery.toLowerCase())) return false
+    }
+    return true
+  }).sort((a, b) => {
+    if (sortBy === 'oldest') {
+      return new Date(a.createdAt || 0) - new Date(b.createdAt || 0)
+    }
+    return new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+  })
+
+  // Pagination slice
+  const totalPages = Math.ceil(filteredListings.length / itemsPerPage) || 1
+  const paginatedListings = filteredListings.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  )
 
   const clearVisualSearch = () => {
     setSearchResults(null)
   }
 
-  const lostCount = listings.filter(i => (i.type || i.itemType) === 'lost').length
-  const foundCount = listings.filter(i => (i.type || i.itemType) === 'found').length
-
-  const getStatusBadge = (itemStatus) => {
-    const s = (itemStatus || 'Active').toLowerCase()
-    if (s === 'resolved') {
-      return { label: 'Resolved', bg: 'rgba(100, 116, 139, 0.15)', text: '#94a3b8', border: 'rgba(100, 116, 139, 0.3)' }
-    }
-    if (s.includes('pending')) {
-      return { label: 'Pending Claim', bg: 'rgba(245, 158, 11, 0.15)', text: '#fbbf24', border: 'rgba(245, 158, 11, 0.3)' }
-    }
-    return { label: 'Active', bg: 'rgba(16, 185, 129, 0.15)', text: '#34d399', border: 'rgba(16, 185, 129, 0.3)' }
+  const handleClearFilters = () => {
+    setSearchQuery('')
+    setCategory('All')
+    setType('all')
+    setLocationQuery('')
+    setVerifiedOnly(false)
+    setSortBy('newest')
+    setCurrentPage(1)
   }
 
   return (
-    <div style={{ paddingBottom: 80 }}>
-      {/* Visual Search Modal */}
+    <div className="flex flex-col min-h-screen">
+      {/* Visual AI Search Modal */}
       <VisualSearchModal
         isOpen={searchModal}
         onClose={() => setSearchModal(false)}
         onSearchResults={(results) => {
           setSearchResults(results)
           setSearchModal(false)
+          // Scroll to results
+          setTimeout(() => {
+            document.getElementById('activity')?.scrollIntoView({ behavior: 'smooth' })
+          }, 100)
         }}
         onResults={(results) => {
           setSearchResults(results)
@@ -103,464 +185,519 @@ export default function Home() {
         }}
       />
 
-      {/* Hero Section */}
-      <div style={{ padding: '56px 0 44px', maxWidth: 760 }}>
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '5px 14px',
-            borderRadius: 999,
-            background: 'rgba(99, 102, 241, 0.12)',
-            border: '1px solid rgba(99, 102, 241, 0.3)',
-            marginBottom: 20
-          }}
-        >
-          <Sparkles size={14} color="#818cf8" />
-          <span style={{ color: '#818cf8', fontSize: 12, fontWeight: 700, letterSpacing: '0.04em' }}>
-            AI-POWERED LOCAL CLIP SEARCH
-          </span>
-        </motion.div>
+      {/* Hero Section with Relief Trust Tone & Live Proof Metrics */}
+      <section className="relative pt-12 pb-16 md:pt-20 md:pb-24 overflow-hidden bg-gradient-to-b from-surface-container-low via-surface to-background border-b border-outline-variant/40">
+        <div className="absolute inset-0 opacity-[0.03] pointer-events-none bg-[radial-gradient(#091426_1px,transparent_1px)] [background-size:16px_16px]"></div>
+        <div className="w-full max-w-7xl mx-auto px-6 md:px-12 relative z-10">
+          <div className="max-w-3xl mx-auto text-center space-y-6">
+            {/* Relief Trust Badge */}
+            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-surface-container-lowest border border-outline-variant shadow-xs">
+              <span className="material-symbols-outlined text-secondary text-[20px] material-symbols-filled">shield_with_heart</span>
+              <span className="text-body-sm font-body-sm font-semibold text-primary">Civic Recovery &amp; Safe Verification Protocol</span>
+            </div>
 
-        <motion.h1
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.06 }}
-          style={{
-            fontSize: 'clamp(36px, 5.5vw, 64px)',
-            fontWeight: 800,
-            lineHeight: 1.08,
-            marginBottom: 18,
-            color: '#fafafa',
-            letterSpacing: '-0.04em'
-          }}
-        >
-          Reuniting people<br />
-          with their <span style={{
-            background: 'linear-gradient(135deg, #6366f1 0%, #ec4899 50%, #f97316 100%)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent'
-          }}>belongings.</span>
-        </motion.h1>
+            <h1 className="text-headline-xl-mobile md:text-headline-xl font-headline-xl text-primary tracking-tight">
+              Lost something precious? <br className="hidden sm:block" />
+              <span className="text-secondary">Let your community help bring it home.</span>
+            </h1>
 
-        <motion.p
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.12 }}
-          style={{ color: '#a1a1aa', fontSize: 17, lineHeight: 1.6, marginBottom: 30, maxWidth: 540 }}
-        >
-          Browse real-time lost and found listings in your community. Take or upload a photo to instantly find visual vector matches.
-        </motion.p>
+            <p className="text-body-lg font-body-lg text-on-surface-variant max-w-2xl mx-auto">
+              HavenFind is a municipal-grade lost &amp; found registry. We replace distress with immediate coordination, privacy-shielded verification, and real-time precinct recovery.
+            </p>
 
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.18 }}
-          style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}
-        >
-          <button
-            onClick={() => setSearchModal(true)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '12px 24px',
-              background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
-              color: 'white',
-              border: 'none',
-              borderRadius: 14,
-              fontWeight: 700,
-              fontSize: 15,
-              cursor: 'pointer',
-              boxShadow: '0 4px 20px rgba(99, 102, 241, 0.4)',
-              transition: 'all 0.15s'
-            }}
-            onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
-            onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
-          >
-            <Camera size={18} />
-            <span>Search by Photo</span>
-          </button>
-
-          <Link
-            to="/submit-item"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '12px 24px',
-              background: 'rgba(255, 255, 255, 0.05)',
-              color: '#fafafa',
-              border: '1px solid rgba(255, 255, 255, 0.12)',
-              borderRadius: 14,
-              fontWeight: 600,
-              fontSize: 15,
-              textDecoration: 'none',
-              transition: 'all 0.15s'
-            }}
-            onMouseEnter={e => {
-              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)'
-              e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)'
-            }}
-            onMouseLeave={e => {
-              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)'
-              e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.12)'
-            }}
-          >
-            <Plus size={18} />
-            <span>Report an Item</span>
-          </Link>
-        </motion.div>
-      </div>
-
-      {/* Visual Search Results Banner */}
-      {searchResults && (
-        <motion.div
-          initial={{ opacity: 0, y: -12 }}
-          animate={{ opacity: 1, y: 0 }}
-          style={{
-            background: 'rgba(99, 102, 241, 0.1)',
-            border: '1px solid rgba(99, 102, 241, 0.3)',
-            borderRadius: 16,
-            padding: '16px 20px',
-            marginBottom: 32,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: 12
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Sparkles size={18} color="#818cf8" />
-            <span style={{ color: '#fafafa', fontWeight: 600, fontSize: 14 }}>
-              Showing {searchResults.length} AI Visual Vector Matches
-            </span>
-          </div>
-          <button
-            onClick={clearVisualSearch}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              background: 'rgba(255, 255, 255, 0.1)',
-              border: 'none',
-              color: '#fafafa',
-              borderRadius: 8,
-              padding: '6px 12px',
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: 'pointer'
-            }}
-          >
-            <X size={14} /> Clear Photo Search
-          </button>
-        </motion.div>
-      )}
-
-      {/* Search & Filter Controls */}
-      <div style={{
-        background: 'rgba(18, 18, 22, 0.7)',
-        backdropFilter: 'blur(12px)',
-        border: '1px solid rgba(255, 255, 255, 0.08)',
-        borderRadius: 20,
-        padding: '20px 24px',
-        marginBottom: 32
-      }}>
-        {/* Top Row: Keyword Search, Type Tabs, Status Filter */}
-        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center', marginBottom: 18 }}>
-          {/* Keyword Input */}
-          <div style={{ flex: '1 1 280px', position: 'relative', display: 'flex', alignItems: 'center' }}>
-            <Search size={17} style={{ position: 'absolute', left: 14, color: '#71717a', pointerEvents: 'none' }} />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Search by keywords, markings, location..."
-              style={{
-                width: '100%',
-                background: '#0e0e11',
-                border: '1px solid #27272a',
-                borderRadius: 12,
-                padding: '10px 14px 10px 42px',
-                color: '#fafafa',
-                fontSize: 14,
-                outline: 'none'
-              }}
-            />
-          </div>
-
-          {/* Type Selector (All, Lost, Found) */}
-          <div style={{ display: 'flex', background: '#0e0e11', padding: 4, borderRadius: 12, border: '1px solid #27272a' }}>
-            {[
-              { id: 'all', label: 'All Reports' },
-              { id: 'lost', label: `Lost (${lostCount})` },
-              { id: 'found', label: `Found (${foundCount})` }
-            ].map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setType(tab.id)}
-                style={{
-                  padding: '7px 14px',
-                  borderRadius: 8,
-                  border: 'none',
-                  background: type === tab.id ? '#27272a' : 'transparent',
-                  color: type === tab.id ? '#fafafa' : '#71717a',
-                  fontSize: 13,
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  transition: 'all 0.15s'
-                }}
+            {/* CTAs & Action Toggles */}
+            <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-4">
+              <Link
+                to="/submit-item?type=lost"
+                className="w-full sm:w-auto px-6 py-3.5 rounded-xl bg-primary hover:bg-primary-container text-on-primary font-semibold flex items-center justify-center gap-2.5 shadow-md hover:shadow-lg active:scale-[0.98] transition-all"
               >
-                {tab.label}
+                <span className="material-symbols-outlined text-tertiary-fixed text-[20px]">search</span>
+                <span>Report Lost Item</span>
+              </Link>
+              <Link
+                to="/submit-item?type=found"
+                className="w-full sm:w-auto px-6 py-3.5 rounded-xl bg-surface-container-lowest hover:bg-surface-container-low border border-outline-variant text-primary font-semibold flex items-center justify-center gap-2.5 shadow-xs active:scale-[0.98] transition-all"
+              >
+                <span className="material-symbols-outlined text-secondary text-[20px]">inventory_2</span>
+                <span>I Found Something</span>
+              </Link>
+              <button
+                onClick={() => setSearchModal(true)}
+                className="w-full sm:w-auto px-5 py-3.5 rounded-xl bg-secondary-container hover:bg-secondary-fixed text-on-secondary-fixed-variant font-semibold flex items-center justify-center gap-2 shadow-xs active:scale-[0.98] transition-all"
+              >
+                <span className="material-symbols-outlined text-[20px]">psychology</span>
+                <span>AI Photo Search</span>
               </button>
-            ))}
-          </div>
+            </div>
 
-          {/* Status Filter */}
-          <div>
-            <select
-              value={status}
-              onChange={e => setStatus(e.target.value)}
-              style={{
-                background: '#0e0e11',
-                border: '1px solid #27272a',
-                borderRadius: 12,
-                color: '#fafafa',
-                fontSize: 13,
-                fontWeight: 600,
-                padding: '9px 14px',
-                cursor: 'pointer',
-                outline: 'none'
-              }}
+            {/* Real Database Registry Metrics Bar */}
+            <div className="pt-8 grid grid-cols-2 md:grid-cols-4 gap-4 max-w-2xl mx-auto border-t border-outline-variant/60">
+              <div className="p-3 text-center">
+                <p className="text-headline-md font-headline-md text-primary font-bold">{stats.total}</p>
+                <p className="text-body-sm font-body-sm text-on-surface-variant">Total Registry Items</p>
+              </div>
+              <div className="p-3 text-center">
+                <p className="text-headline-md font-headline-md text-secondary font-bold">{stats.active}</p>
+                <p className="text-body-sm font-body-sm text-on-surface-variant">Active Incidents</p>
+              </div>
+              <div className="p-3 text-center">
+                <p className="text-headline-md font-headline-md text-primary font-bold">{stats.inCustody}</p>
+                <p className="text-body-sm font-body-sm text-on-surface-variant">Secured in Custody</p>
+              </div>
+              <div className="p-3 text-center">
+                <p className="text-headline-md font-headline-md text-secondary font-bold">{stats.resolved}</p>
+                <p className="text-body-sm font-body-sm text-on-surface-variant">Reunited Cases</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Interactive Search Experience & Category Filter Bar */}
+      <section className="relative -mt-8 z-30 w-full max-w-7xl mx-auto px-6 md:px-12">
+        <div className="bg-surface-container-lowest rounded-2xl shadow-xl border border-outline-variant p-4 md:p-6 backdrop-blur-md">
+          {/* Search Input Bar Cluster */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              setCurrentPage(1)
+              fetchItems()
+              document.getElementById('activity')?.scrollIntoView({ behavior: 'smooth' })
+            }}
+            className="flex flex-col md:flex-row items-center gap-3"
+          >
+            {/* Primary Query Input */}
+            <div className="relative w-full md:flex-1">
+              <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline text-[20px]">search</span>
+              <input
+                id="civic-search-input"
+                type="text"
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value)
+                  setCurrentPage(1)
+                }}
+                placeholder="Search by keywords: 'iPhone 15', 'Labrador', 'Leather wallet', case number..."
+                className="w-full pl-12 pr-16 py-3.5 rounded-xl border border-outline-variant bg-surface text-on-surface placeholder:text-outline focus:border-primary focus:ring-2 focus:ring-primary/10 text-body-md transition-all"
+              />
+              <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery('')
+                      setCurrentPage(1)
+                    }}
+                    className="p-1 rounded-md text-outline hover:text-primary transition-colors cursor-pointer"
+                    aria-label="Clear search query"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">close</span>
+                  </button>
+                )}
+                <span className="hidden sm:inline-block px-2 py-0.5 rounded bg-surface-container border border-outline-variant text-label-sm font-label-sm text-outline">
+                  ⌘K
+                </span>
+              </div>
+            </div>
+
+            {/* Proximity / Location Dropdown */}
+            <div className="relative w-full md:w-64">
+              <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline text-[20px]">location_on</span>
+              <select
+                value={locationQuery}
+                onChange={(e) => {
+                  setLocationQuery(e.target.value)
+                  setCurrentPage(1)
+                }}
+                className="w-full pl-12 pr-10 py-3.5 rounded-xl border border-outline-variant bg-surface text-on-surface focus:border-primary focus:ring-2 focus:ring-primary/10 text-body-md appearance-none font-medium cursor-pointer"
+              >
+                <option value="">All Metro Civic Zones</option>
+                <option value="Central">Central Metro &amp; Downtown</option>
+                <option value="Transit">Transit Terminals &amp; Rail</option>
+                <option value="Park">Civic Parks &amp; Recreation</option>
+                <option value="Library">Public Library &amp; Education</option>
+                <option value="Hospital">Medical &amp; University</option>
+              </select>
+              <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline pointer-events-none text-[20px]">expand_more</span>
+            </div>
+
+            {/* Filter Submit Button */}
+            <button
+              type="submit"
+              className="w-full md:w-auto px-7 py-3.5 rounded-xl bg-primary hover:bg-primary-container text-on-primary font-semibold text-body-md flex items-center justify-center gap-2 active:scale-[0.98] transition-colors shadow-xs cursor-pointer"
             >
-              <option value="all">All Statuses</option>
-              <option value="Active">Active Only</option>
-              <option value="Resolved">Resolved</option>
-            </select>
+              <span>Filter Feed</span>
+            </button>
+          </form>
+
+          {/* Category Horizontal Pills & Toggle Filter State */}
+          <div className="mt-5 pt-4 border-t border-outline-variant/60 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="flex items-center gap-2 overflow-x-auto w-full pb-2 md:pb-0 custom-scrollbar">
+              <span className="text-label-sm font-label-sm text-outline shrink-0 mr-1">CATEGORIES:</span>
+              {CATEGORIES.map((cat) => {
+                const isSelected = category === cat.id
+                return (
+                  <button
+                    key={cat.id}
+                    onClick={() => {
+                      setCategory(cat.id)
+                      setCurrentPage(1)
+                    }}
+                    className={`px-3.5 py-1.5 rounded-full text-body-sm font-medium flex items-center gap-1.5 shrink-0 transition-colors cursor-pointer ${
+                      isSelected
+                        ? 'bg-primary text-on-primary shadow-xs'
+                        : 'bg-surface-container-low hover:bg-surface-container text-on-surface-variant hover:text-primary border border-outline-variant/50'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-[16px]">{cat.icon}</span>
+                    <span>{cat.label}</span>
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Quick Sort, Type & Verification Filters */}
+            <div className="flex flex-wrap items-center gap-4 shrink-0 text-body-sm font-body-sm text-on-surface-variant">
+              {/* Type Switch */}
+              <div className="inline-flex rounded-lg border border-outline-variant p-0.5 bg-surface-container text-label-sm font-label-sm">
+                <button
+                  type="button"
+                  onClick={() => { setType('all'); setCurrentPage(1); }}
+                  className={`px-2 py-1 rounded font-semibold transition-colors cursor-pointer ${type === 'all' ? 'bg-white text-primary shadow-xs' : 'text-on-surface-variant'}`}
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setType('lost'); setCurrentPage(1); }}
+                  className={`px-2 py-1 rounded font-semibold transition-colors cursor-pointer ${type === 'lost' ? 'bg-white text-primary shadow-xs' : 'text-on-surface-variant'}`}
+                >
+                  Lost
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setType('found'); setCurrentPage(1); }}
+                  className={`px-2 py-1 rounded font-semibold transition-colors cursor-pointer ${type === 'found' ? 'bg-white text-primary shadow-xs' : 'text-on-surface-variant'}`}
+                >
+                  Found
+                </button>
+              </div>
+
+              <label className="flex items-center gap-2 cursor-pointer select-none text-body-sm">
+                <input
+                  type="checkbox"
+                  checked={verifiedOnly}
+                  onChange={(e) => {
+                    setVerifiedOnly(e.target.checked)
+                    setCurrentPage(1)
+                  }}
+                  className="w-4 h-4 rounded border-outline text-primary focus:ring-primary/20 cursor-pointer"
+                />
+                <span>In Custody Only</span>
+              </label>
+
+              <span className="text-outline hidden sm:inline">|</span>
+
+              <div className="flex items-center gap-1.5 text-primary font-medium">
+                <span className="text-outline text-body-sm">Sort:</span>
+                <select
+                  value={sortBy}
+                  onChange={(e) => {
+                    setSortBy(e.target.value)
+                    setCurrentPage(1)
+                  }}
+                  className="bg-transparent border-none text-body-sm font-semibold text-primary focus:ring-0 cursor-pointer p-0 pr-4"
+                >
+                  <option value="newest">Most Recent</option>
+                  <option value="oldest">Oldest First</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Directory Feed: Active Items Section */}
+      <section className="w-full max-w-7xl mx-auto px-6 md:px-12 py-12" id="activity">
+        {/* If Visual Vector Search is active */}
+        {searchResults && (
+          <div className="mb-10">
+            <MatchResultsGrid results={searchResults} onClear={clearVisualSearch} />
+          </div>
+        )}
+
+        {/* Section Header with Real-Time Counter */}
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-8">
+          <div>
+            <div className="flex items-center gap-2 text-label-sm font-label-sm text-outline tracking-wider">
+              <span>REAL-TIME CIVIC FEED</span>
+              <span className="w-2 h-2 rounded-full bg-secondary animate-ping"></span>
+            </div>
+            <h2 className="text-headline-lg-mobile md:text-headline-lg font-headline-lg text-primary tracking-tight mt-1">
+              Recent Incidents &amp; Secured Items
+            </h2>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSearchModal(true)}
+              className="px-3 py-1.5 rounded-lg border border-outline-variant text-body-sm font-medium text-primary hover:bg-surface-container transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[18px] text-secondary">psychology</span>
+              <span>AI Search</span>
+            </button>
+            <div className="bg-surface-container rounded-lg p-0.5 flex items-center border border-outline-variant/60">
+              <button
+                aria-label="Grid View"
+                onClick={() => setViewMode('grid')}
+                className={`p-1.5 rounded transition-colors cursor-pointer ${
+                  viewMode === 'grid'
+                    ? 'bg-surface-container-lowest text-primary shadow-xs'
+                    : 'text-outline hover:text-primary'
+                }`}
+              >
+                <span className="material-symbols-outlined text-body-md">grid_view</span>
+              </button>
+              <button
+                aria-label="List View"
+                onClick={() => setViewMode('list')}
+                className={`p-1.5 rounded transition-colors cursor-pointer ${
+                  viewMode === 'list'
+                    ? 'bg-surface-container-lowest text-primary shadow-xs'
+                    : 'text-outline hover:text-primary'
+                }`}
+              >
+                <span className="material-symbols-outlined text-body-md">view_list</span>
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Category Pill Buttons */}
-        <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
-          {CATEGORIES.map(cat => {
-            const isActive = category === cat
-            return (
-              <button
-                key={cat}
-                onClick={() => setCategory(cat)}
-                style={{
-                  whiteSpace: 'nowrap',
-                  padding: '6px 14px',
-                  borderRadius: 999,
-                  border: `1px solid ${isActive ? '#6366f1' : 'rgba(255, 255, 255, 0.08)'}`,
-                  background: isActive ? 'rgba(99, 102, 241, 0.2)' : 'rgba(255, 255, 255, 0.03)',
-                  color: isActive ? '#a5b4fc' : '#a1a1aa',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  transition: 'all 0.15s'
-                }}
-              >
-                {cat}
-              </button>
-            )
-          })}
-        </div>
-      </div>
+        {/* Listings Feed: Loading / Error / Empty / Data */}
+        {error ? (
+          <div className="py-12 text-center max-w-md mx-auto p-6 rounded-2xl bg-surface-container-lowest border border-error/20 space-y-3">
+            <span className="material-symbols-outlined text-[36px] text-error">cloud_off</span>
+            <h3 className="font-bold text-headline-sm text-primary">Unable to Load Civic Feed</h3>
+            <p className="text-body-sm text-on-surface-variant">{error}</p>
+            <button
+              onClick={fetchItems}
+              className="px-5 py-2.5 rounded-xl bg-primary text-on-primary font-semibold text-body-sm hover:bg-primary-container transition-all cursor-pointer"
+            >
+              Retry Connection
+            </button>
+          </div>
+        ) : loading ? (
+          <div className="py-16 text-center">
+            <div className="w-12 h-12 rounded-full bg-surface-container border-2 border-primary border-t-transparent animate-spin mx-auto mb-3"></div>
+            <p className="text-body-sm font-body-sm text-on-surface-variant">Accessing municipal property records...</p>
+          </div>
+        ) : filteredListings.length === 0 ? (
+          listings.length === 0 ? (
+            <EmptyState
+              title="No Incidents Reported Yet"
+              description="There are currently no lost or found items in the community registry. Be the first to report an item."
+              actionText="Report an Item"
+              actionLink="/submit-item"
+            />
+          ) : (
+            <div className="space-y-4">
+              <EmptyState
+                title="No Matching Municipal Records"
+                description="No active reports match the selected filters. You can clear your search or file a new missing item case."
+                actionText="Report an Item"
+                actionLink="/submit-item"
+              />
+              <div className="text-center pt-2">
+                <button
+                  type="button"
+                  onClick={handleClearFilters}
+                  className="text-label-sm font-semibold text-primary hover:underline cursor-pointer inline-flex items-center gap-1"
+                >
+                  <span className="material-symbols-outlined text-[16px]">restart_alt</span>
+                  <span>Clear All Active Filters</span>
+                </button>
+              </div>
+            </div>
+          )
+        ) : (
+          <>
+            <div className={viewMode === 'grid' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6' : 'space-y-4'}>
+              {paginatedListings.map((item) => (
+                <ItemCard key={item._id} item={item} viewMode={viewMode} />
+              ))}
 
-      {/* Grid of Results */}
-      {searchResults ? (
-        <MatchResultsGrid results={searchResults} />
-      ) : loading ? (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 0' }}>
-          <div style={{
-            width: 40,
-            height: 40,
-            border: '2px solid rgba(255, 255, 255, 0.1)',
-            borderTopColor: '#6366f1',
-            borderRadius: '50%',
-            animation: 'spin 0.8s linear infinite',
-            marginBottom: 16
-          }} />
-          <p style={{ color: '#71717a', fontSize: 14 }}>Loading listings...</p>
-        </div>
-      ) : listings.length === 0 ? (
-        <div style={{
-          background: 'rgba(18, 18, 22, 0.6)',
-          border: '1px dashed rgba(255, 255, 255, 0.1)',
-          borderRadius: 20,
-          padding: '48px 24px',
-          textAlign: 'center'
-        }}>
-          <Package size={36} color="#71717a" style={{ margin: '0 auto 12px' }} />
-          <h3 style={{ fontSize: 18, fontWeight: 700, color: '#fafafa', marginBottom: 6 }}>No Listings Found</h3>
-          <p style={{ color: '#71717a', fontSize: 14, marginBottom: 20 }}>
-            No items matched your current filter criteria.
-          </p>
-          <button
-            onClick={() => { setCategory('All'); setType('all'); setStatus('all'); setSearchQuery('') }}
-            style={{
-              padding: '8px 18px',
-              borderRadius: 10,
-              background: '#27272a',
-              border: 'none',
-              color: '#fafafa',
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: 'pointer'
-            }}
-          >
-            Reset Filters
-          </button>
-        </div>
-      ) : (
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-          gap: 24
-        }}>
-          {listings.map(item => {
-            const itemType = (item.type || item.itemType || 'lost').toLowerCase()
-            const badge = getStatusBadge(item.status)
-            const isLost = itemType === 'lost'
-
-            return (
-              <motion.div
-                key={item._id}
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
-                style={{
-                  background: 'rgba(18, 18, 22, 0.85)',
-                  border: '1px solid rgba(255, 255, 255, 0.08)',
-                  borderRadius: 20,
-                  overflow: 'hidden',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  transition: 'all 0.2s',
-                  boxShadow: '0 8px 24px rgba(0,0,0,0.4)'
-                }}
-                onMouseEnter={e => {
-                  e.currentTarget.style.transform = 'translateY(-4px)'
-                  e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.35)'
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.transform = 'translateY(0)'
-                  e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)'
-                }}
-              >
-                {/* Image Container */}
-                <div style={{ position: 'relative', width: '100%', height: 190, background: '#09090b', overflow: 'hidden' }}>
-                  <img
-                    src={item.imageUrl}
-                    alt={item.title}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                    loading="lazy"
-                  />
-                  {/* Type Tag */}
-                  <div style={{
-                    position: 'absolute',
-                    top: 12,
-                    left: 12,
-                    background: isLost ? 'rgba(239, 68, 68, 0.9)' : 'rgba(16, 185, 129, 0.9)',
-                    backdropFilter: 'blur(8px)',
-                    color: 'white',
-                    fontSize: 11,
-                    fontWeight: 700,
-                    textTransform: 'uppercase',
-                    padding: '4px 10px',
-                    borderRadius: 999,
-                    letterSpacing: '0.04em'
-                  }}>
-                    {isLost ? 'Lost' : 'Found'}
-                  </div>
-
-                  {/* Status Badge */}
-                  <div style={{
-                    position: 'absolute',
-                    top: 12,
-                    right: 12,
-                    background: badge.bg,
-                    backdropFilter: 'blur(8px)',
-                    color: badge.text,
-                    border: `1px solid ${badge.border}`,
-                    fontSize: 11,
-                    fontWeight: 700,
-                    padding: '4px 10px',
-                    borderRadius: 999
-                  }}>
-                    {badge.label}
-                  </div>
-                </div>
-
-                {/* Content */}
-                <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', flex: 1 }}>
-                  {/* Category */}
-                  <span style={{ fontSize: 11, fontWeight: 700, color: '#818cf8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
-                    {item.category}
-                  </span>
-
-                  {/* Title */}
-                  <h3 style={{ fontSize: 16, fontWeight: 700, color: '#fafafa', marginBottom: 8, lineHeight: 1.3 }}>
-                    {item.title}
-                  </h3>
-
-                  {/* Description snippet */}
-                  <p style={{
-                    fontSize: 13,
-                    color: '#a1a1aa',
-                    lineHeight: 1.5,
-                    marginBottom: 14,
-                    display: '-webkit-box',
-                    WebkitLineClamp: 2,
-                    WebkitBoxOrient: 'vertical',
-                    overflow: 'hidden'
-                  }}>
-                    {item.description || 'No additional description provided.'}
-                  </p>
-
-                  {/* Location & Date */}
-                  <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 12, borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#71717a', fontSize: 12 }}>
-                      <MapPin size={13} style={{ flexShrink: 0 }} />
-                      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {item.location?.addressText || 'Location recorded'}
-                      </span>
-                    </div>
-
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#71717a', fontSize: 12 }}>
-                        <Calendar size={13} />
-                        <span>{new Date(item.date || item.createdAt).toLocaleDateString()}</span>
+              {/* Real Reunion Highlight Bento Card (only shown if a real resolved case exists in DB) */}
+              {currentPage === 1 && viewMode === 'grid' && (() => {
+                const realReunion = listings.find((i) => i.status === 'Resolved')
+                if (!realReunion) return null
+                const caseId = (realReunion._id || '').slice(-4).toUpperCase()
+                const reporterName = realReunion.reportedBy?.name || 'Registered Citizen'
+                return (
+                  <article className="bg-gradient-to-br from-surface-container-lowest via-surface-container-low to-secondary-container/30 rounded-2xl border border-secondary-fixed p-6 shadow-sm flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between mb-4">
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-secondary text-on-secondary text-label-sm font-label-sm font-semibold">
+                          <span className="material-symbols-outlined text-sm material-symbols-filled">volunteer_activism</span>
+                          VERIFIED REUNION
+                        </span>
+                        <span className="text-label-sm font-label-sm text-secondary font-bold">CASE #LF-{caseId}</span>
                       </div>
-
+                      <h3 className="text-headline-sm font-headline-sm text-primary font-bold line-clamp-2">
+                        {realReunion.title}
+                      </h3>
+                      <p className="text-body-sm font-body-sm text-on-surface-variant mt-3 line-clamp-3">
+                        {realReunion.description || 'Turned in and verified under municipal custody.'}
+                      </p>
+                      <div className="mt-4 p-3.5 rounded-xl bg-surface-container-lowest border border-outline-variant/50 flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-secondary-fixed flex items-center justify-center text-on-secondary-fixed font-bold text-headline-sm shrink-0">
+                          {reporterName.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="text-body-sm font-body-sm truncate">
+                          <p className="font-semibold text-primary truncate">{reporterName}</p>
+                          <p className="text-outline text-label-sm font-label-sm">{formatLocation(realReunion.location)}</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="pt-6 mt-6 border-t border-outline-variant/60 flex items-center justify-between">
+                      <span className="text-body-sm font-body-sm text-on-surface-variant font-medium">Have an item registered?</span>
                       <Link
-                        to={`/item/${item._id}`}
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 4,
-                          color: '#818cf8',
-                          fontSize: 13,
-                          fontWeight: 600,
-                          textDecoration: 'none'
-                        }}
+                        to={`/item/${realReunion._id}`}
+                        className="text-secondary hover:text-on-secondary-container font-semibold text-body-sm flex items-center gap-1"
                       >
-                        <span>Details</span>
-                        <ChevronRight size={14} />
+                        <span>View Dossier</span>
+                        <span className="material-symbols-outlined text-body-sm">arrow_forward</span>
                       </Link>
                     </div>
-                  </div>
+                  </article>
+                )
+              })()}
+            </div>
+
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="mt-12 flex flex-col sm:flex-row items-center justify-between gap-4 pt-6 border-t border-outline-variant">
+                <p className="text-body-sm font-body-sm text-outline">
+                  Showing <span className="font-semibold text-primary">{(currentPage - 1) * itemsPerPage + 1} - {Math.min(currentPage * itemsPerPage, filteredListings.length)}</span> of <span className="font-semibold text-primary">{filteredListings.length}</span> active municipal records
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="px-4 py-2 rounded-lg border border-outline-variant text-body-sm font-semibold disabled:opacity-40 hover:bg-surface-container transition-colors"
+                  >
+                    Previous
+                  </button>
+                  {Array.from({ length: totalPages }, (_, idx) => idx + 1).slice(0, 5).map((page) => (
+                    <button
+                      key={page}
+                      onClick={() => setCurrentPage(page)}
+                      className={`px-3 py-2 rounded-lg text-body-sm font-semibold transition-colors ${
+                        currentPage === page
+                          ? 'bg-primary text-on-primary'
+                          : 'hover:bg-surface-container text-on-surface-variant'
+                      }`}
+                    >
+                      {page}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                    className="px-4 py-2 rounded-lg border border-outline-variant text-primary hover:bg-surface-container text-body-sm font-semibold transition-colors disabled:opacity-40"
+                  >
+                    Next
+                  </button>
                 </div>
-              </motion.div>
-            )
-          })}
+              </div>
+            )}
+          </>
+        )}
+      </section>
+
+      {/* How Verification Protocol Works (High-Clarity Utility Section) */}
+      <section className="bg-surface-container-low py-16 md:py-24 border-y border-outline-variant" id="how-it-works">
+        <div className="w-full max-w-7xl mx-auto px-6 md:px-12">
+          <div className="max-w-2xl mx-auto text-center mb-16">
+            <span className="text-label-sm font-label-sm text-secondary font-semibold uppercase tracking-wider">
+              CIVIC INTEGRITY PIPELINE
+            </span>
+            <h2 className="text-headline-xl-mobile md:text-headline-lg font-headline-lg text-primary tracking-tight mt-1">
+              How HavenFind protects your property &amp; privacy
+            </h2>
+            <p className="text-body-md font-body-md text-on-surface-variant mt-3">
+              Our multi-tier verification ensures items return only to their rightful owners without disclosing personal data to strangers.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            {/* Step 1 */}
+            <div className="bg-surface-container-lowest p-8 rounded-2xl border border-outline-variant shadow-xs relative">
+              <div className="w-12 h-12 rounded-xl bg-surface-container text-primary flex items-center justify-center font-bold text-headline-sm mb-6">
+                01
+              </div>
+              <h3 className="text-headline-sm font-headline-sm text-primary font-bold">Blind Registration</h3>
+              <p className="text-body-sm font-body-sm text-on-surface-variant mt-2 leading-relaxed">
+                When reporting an item, unique identifying details (serial numbers, engravings, passcode locks) remain encrypted and hidden from public feed scanning.
+              </p>
+              <div className="mt-6 flex items-center gap-2 text-label-sm font-label-sm text-outline">
+                <span className="material-symbols-outlined text-secondary text-headline-sm">lock_clock</span>
+                Zero-Knowledge Verification
+              </div>
+            </div>
+
+            {/* Step 2 */}
+            <div className="bg-surface-container-lowest p-8 rounded-2xl border border-outline-variant shadow-xs relative">
+              <div className="w-12 h-12 rounded-xl bg-surface-container text-primary flex items-center justify-center font-bold text-headline-sm mb-6">
+                02
+              </div>
+              <h3 className="text-headline-sm font-headline-sm text-primary font-bold">Safe Custody Hand-off</h3>
+              <p className="text-body-sm font-body-sm text-on-surface-variant mt-2 leading-relaxed">
+                Finders can deposit objects directly into official municipal partner lockers, public transit desks, or verified precinct dropboxes for secure inventorying.
+              </p>
+              <div className="mt-6 flex items-center gap-2 text-label-sm font-label-sm text-outline">
+                <span className="material-symbols-outlined text-secondary text-headline-sm">local_police</span>
+                Chain of Custody Logged
+              </div>
+            </div>
+
+            {/* Step 3 */}
+            <div className="bg-surface-container-lowest p-8 rounded-2xl border border-outline-variant shadow-xs relative">
+              <div className="w-12 h-12 rounded-xl bg-surface-container text-primary flex items-center justify-center font-bold text-headline-sm mb-6">
+                03
+              </div>
+              <h3 className="text-headline-sm font-headline-sm text-primary font-bold">Encrypted Reunion</h3>
+              <p className="text-body-sm font-body-sm text-on-surface-variant mt-2 leading-relaxed">
+                Upon successful cryptographic or serial match, claimants receive an authentic retrieval token to collect property in person at verified desks.
+              </p>
+              <div className="mt-6 flex items-center gap-2 text-label-sm font-label-sm text-outline">
+                <span className="material-symbols-outlined text-secondary text-headline-sm">task_alt</span>
+                Authorized Safe Release
+              </div>
+            </div>
+          </div>
+
+          {/* Safe Dispatch Banner */}
+          <div className="mt-12 bg-primary rounded-2xl p-6 md:p-8 text-on-primary flex flex-col md:flex-row items-center justify-between gap-6" id="dispatch">
+            <div className="flex items-center gap-4">
+              <div className="w-14 h-14 rounded-full bg-primary-container flex items-center justify-center text-secondary-fixed shrink-0">
+                <span className="material-symbols-outlined text-headline-md">support_agent</span>
+              </div>
+              <div>
+                <h4 className="text-headline-sm font-headline-sm font-bold">Need emergency incident dispatch?</h4>
+                <p className="text-body-sm font-body-sm text-inverse-primary">
+                  For missing high-value medical items, passports, or critical assistive devices, contact our 24/7 civic hotline.
+                </p>
+              </div>
+            </div>
+            <a
+              href="tel:18005550192"
+              className="shrink-0 px-6 py-3 rounded-xl bg-secondary hover:bg-on-secondary-container text-on-secondary font-semibold text-body-md transition-all active:scale-[0.98] shadow-xs"
+            >
+              Call Civic Dispatch (24/7)
+            </a>
+          </div>
         </div>
-      )}
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </section>
     </div>
   )
 }

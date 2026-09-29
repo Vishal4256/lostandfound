@@ -1,28 +1,16 @@
 import { useState, useEffect, useCallback } from 'react'
-import { motion } from 'framer-motion'
-import {
-  Mail,
-  Tag,
-  CheckCircle,
-  Clock,
-  MessageCircle,
-  Package,
-  ExternalLink,
-  Plus,
-  RefreshCw,
-  ShieldCheck,
-  ChevronRight,
-  Loader2
-} from 'lucide-react'
 import { Link } from 'react-router-dom'
 import api from '../services/api'
 import { toast } from 'sonner'
 import { useAuth } from '../context/AuthContext'
+import StatCard from '../components/common/StatCard'
+import StatusBadge from '../components/common/StatusBadge'
+import EmptyState from '../components/common/EmptyState'
+import { formatLocation } from '../utils/formatters'
 
 export default function Dashboard() {
   const { user } = useAuth()
-
-  const [activeTab, setActiveTab] = useState('reports') // 'reports' | 'claims' | 'chats'
+  const [activeTab, setActiveTab] = useState('reports')
   const [reports, setReports] = useState([])
   const [claims, setClaims] = useState([])
   const [conversations, setConversations] = useState([])
@@ -49,553 +37,379 @@ export default function Dashboard() {
         setConversations(convosRes.value.data.conversations || [])
       }
     } catch {
-      toast.error('Failed to load dashboard data')
+      toast.error('Failed to sync registry dashboard data')
     } finally {
       setLoading(false)
     }
   }, [])
 
   useEffect(() => {
+    // eslint-disable-next-line react/set-state-in-effect
     fetchData()
   }, [fetchData])
 
-  // Toggle status of a reported item
   const handleToggleStatus = async (itemId, currentStatus) => {
     const nextStatus = currentStatus === 'Resolved' ? 'Active' : 'Resolved'
     try {
       const { data } = await api.patch(`/api/items/${itemId}/status`, { status: nextStatus })
       if (data.success) {
-        setReports(prev => prev.map(r => r._id === itemId ? { ...r, status: nextStatus } : r))
-        toast.success(`Marked as ${nextStatus}`)
+        setReports((prev) =>
+          prev.map((r) => (r._id === itemId ? { ...r, status: nextStatus } : r))
+        )
+        toast.success(`Case status updated to ${nextStatus}`)
       }
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to update status')
     }
   }
 
-  const lostCount = reports.filter(r => (r.type || r.itemType) === 'lost').length
-  const foundCount = reports.filter(r => (r.type || r.itemType) === 'found').length
-  const resolvedCount = reports.filter(r => r.status === 'Resolved').length
-
+  const lostCount = reports.filter((r) => (r.type || r.itemType) === 'lost').length
+  const foundCount = reports.filter((r) => (r.type || r.itemType) === 'found').length
+  const resolvedCount = reports.filter((r) => r.status === 'Resolved').length
   const userInitial = user?.name ? user.name.charAt(0).toUpperCase() : 'U'
 
   return (
-    <div style={{ padding: '36px 0 80px', maxWidth: 960, margin: '0 auto' }}>
-      {/* User Profile Card */}
-      <motion.div
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          flexWrap: 'wrap',
-          gap: 20,
-          background: 'rgba(18, 18, 22, 0.85)',
-          backdropFilter: 'blur(16px)',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
-          borderRadius: 24,
-          padding: '28px 32px',
-          marginBottom: 28,
-          boxShadow: '0 20px 50px rgba(0,0,0,0.4)',
-          position: 'relative',
-          overflow: 'hidden'
-        }}
-      >
-        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 4, background: 'linear-gradient(90deg, #6366f1, #ec4899, #f97316)' }} />
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-          <div style={{
-            width: 60,
-            height: 60,
-            borderRadius: 18,
-            background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: 'white',
-            fontWeight: 800,
-            fontSize: 24,
-            boxShadow: '0 8px 20px rgba(99, 102, 241, 0.35)'
-          }}>
+    <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 md:px-12 py-8 md:py-12 space-y-8">
+      {/* Profile Overview Card */}
+      <div className="bg-surface-container-lowest rounded-2xl border border-outline-variant p-6 md:p-8 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-6 relative overflow-hidden">
+        <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-primary via-secondary to-primary" />
+        
+        <div className="flex items-center gap-5">
+          <div className="w-16 h-16 rounded-2xl bg-primary text-secondary-fixed flex items-center justify-center font-bold text-headline-md shadow-xs shrink-0">
             {userInitial}
           </div>
           <div>
-            <h1 style={{ fontSize: 22, fontWeight: 800, color: '#fafafa', margin: '0 0 4px', letterSpacing: '-0.02em' }}>
-              {user?.name || 'Community Member'}
-            </h1>
-            <p style={{ color: '#a1a1aa', fontSize: 13, margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Mail size={13} /> {user?.email}
+            <div className="flex items-center gap-2">
+              <h1 className="text-headline-md font-headline-md font-bold text-primary">
+                {user?.name || 'Civic Member'}
+              </h1>
+              <span className="px-2.5 py-0.5 rounded-full bg-secondary-container text-on-secondary-fixed-variant text-label-sm font-label-sm font-bold border border-secondary-fixed">
+                {user?.role === 'admin' ? 'ADMINISTRATOR' : 'VERIFIED CITIZEN'}
+              </span>
+            </div>
+            <p className="text-body-sm font-body-sm text-on-surface-variant flex items-center gap-1.5 mt-1">
+              <span className="material-symbols-outlined text-[16px] text-outline">mail</span>
+              <span>{user?.email}</span>
             </p>
-            <span style={{
-              display: 'inline-block',
-              fontSize: 11,
-              fontWeight: 700,
-              textTransform: 'uppercase',
-              color: '#818cf8',
-              background: 'rgba(99, 102, 241, 0.15)',
-              padding: '2px 8px',
-              borderRadius: 6
-            }}>
-              {user?.role === 'admin' ? 'Administrator' : 'Verified Member'}
-            </span>
+            <p className="text-label-sm font-label-sm text-outline mt-1">
+              Account Status: Active &bull; Citizen Ledger ID: #{user?._id?.slice(-6).toUpperCase() || 'REG-981'}
+            </p>
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: 10 }}>
+        <div className="flex items-center gap-3 w-full sm:w-auto">
           <button
             onClick={fetchData}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '10px 16px',
-              borderRadius: 12,
-              background: 'rgba(255, 255, 255, 0.05)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              color: '#fafafa',
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: 'pointer'
-            }}
+            className="px-4 py-2.5 rounded-xl border border-outline-variant hover:bg-surface-container text-primary font-semibold text-body-sm flex items-center gap-1.5 transition-colors"
           >
-            <RefreshCw size={14} /> Refresh
+            <span className="material-symbols-outlined text-[18px]">sync</span>
+            <span>Refresh Feeds</span>
           </button>
           <Link
             to="/submit-item"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '10px 18px',
-              borderRadius: 12,
-              background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
-              border: 'none',
-              color: 'white',
-              fontSize: 13,
-              fontWeight: 700,
-              textDecoration: 'none',
-              boxShadow: '0 4px 15px rgba(99, 102, 241, 0.35)'
-            }}
+            className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-container text-on-primary font-semibold text-body-sm flex items-center gap-2 shadow-xs transition-colors"
           >
-            <Plus size={16} /> Report Item
+            <span className="material-symbols-outlined text-[18px]">add_circle</span>
+            <span>Report Item</span>
           </Link>
         </div>
-      </motion.div>
+      </div>
 
-      {/* Stats Counter Bar */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
-        gap: 14,
-        marginBottom: 28
-      }}>
-        {[
-          { label: 'My Reports', value: reports.length, color: '#818cf8', icon: Package },
-          { label: 'Lost Items', value: lostCount, color: '#f87171', icon: Tag },
-          { label: 'Found Items', value: foundCount, color: '#34d399', icon: CheckCircle },
-          { label: 'My Claims', value: claims.length, color: '#fbbf24', icon: ShieldCheck },
-          { label: 'Resolved', value: resolvedCount, color: '#c084fc', icon: Clock }
-        ].map((s, i) => (
-          <div
-            key={i}
-            style={{
-              background: 'rgba(18, 18, 22, 0.7)',
-              border: '1px solid rgba(255, 255, 255, 0.06)',
-              borderRadius: 16,
-              padding: '16px 20px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 14
-            }}
-          >
-            <div style={{
-              width: 40,
-              height: 40,
-              borderRadius: 12,
-              background: `${s.color}15`,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: s.color
-            }}>
-              <s.icon size={20} />
-            </div>
-            <div>
-              <p style={{ fontSize: 20, fontWeight: 800, color: '#fafafa', margin: 0 }}>{s.value}</p>
-              <p style={{ fontSize: 12, color: '#71717a', margin: 0 }}>{s.label}</p>
-            </div>
-          </div>
-        ))}
+      {/* Metrics Row */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <StatCard
+          label="Total Case Reports"
+          value={reports.length}
+          subtext={`${lostCount} Lost, ${foundCount} Found`}
+          icon="inventory_2"
+        />
+        <StatCard
+          label="Reunited & Resolved"
+          value={resolvedCount}
+          subtext="Closed municipal files"
+          icon="check_circle"
+          color="secondary"
+        />
+        <StatCard
+          label="Ownership Claims Filed"
+          value={claims.length}
+          subtext="Under statutory review"
+          icon="assignment_turned_in"
+        />
+        <StatCard
+          label="Active Secure Channels"
+          value={conversations.length}
+          subtext="Coordination chats"
+          icon="chat"
+        />
       </div>
 
       {/* Tab Navigation */}
-      <div style={{
-        display: 'flex',
-        gap: 6,
-        background: '#0e0e11',
-        padding: 5,
-        borderRadius: 14,
-        border: '1px solid #27272a',
-        marginBottom: 24
-      }}>
-        {[
-          { id: 'reports', label: `My Reported Items (${reports.length})`, icon: Package },
-          { id: 'claims', label: `My Submitted Claims (${claims.length})`, icon: ShieldCheck },
-          { id: 'chats', label: `Direct Chats (${conversations.length})`, icon: MessageCircle }
-        ].map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            style={{
-              flex: 1,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 8,
-              padding: '11px 0',
-              borderRadius: 10,
-              border: 'none',
-              background: activeTab === tab.id ? 'linear-gradient(135deg, #6366f1, #4f46e5)' : 'transparent',
-              color: activeTab === tab.id ? 'white' : '#a1a1aa',
-              fontWeight: 700,
-              fontSize: 14,
-              cursor: 'pointer',
-              transition: 'all 0.15s'
-            }}
-          >
-            <tab.icon size={16} />
-            <span>{tab.label}</span>
-          </button>
-        ))}
+      <div className="border-b border-outline-variant flex items-center gap-6">
+        <button
+          onClick={() => setActiveTab('reports')}
+          className={`pb-3 font-semibold text-body-md flex items-center gap-2 transition-colors border-b-2 ${
+            activeTab === 'reports'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-on-surface-variant hover:text-primary'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[20px]">folder_open</span>
+          <span>My Case Reports ({reports.length})</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('claims')}
+          className={`pb-3 font-semibold text-body-md flex items-center gap-2 transition-colors border-b-2 ${
+            activeTab === 'claims'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-on-surface-variant hover:text-primary'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[20px]">verified</span>
+          <span>My Filed Claims ({claims.length})</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('chats')}
+          className={`pb-3 font-semibold text-body-md flex items-center gap-2 transition-colors border-b-2 ${
+            activeTab === 'chats'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-on-surface-variant hover:text-primary'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[20px]">chat</span>
+          <span>Secure Messages ({conversations.length})</span>
+        </button>
       </div>
 
       {/* Tab Content */}
       {loading ? (
-        <div style={{ textAlign: 'center', padding: '60px 0', color: '#71717a' }}>
-          <Loader2 size={32} style={{ animation: 'spin 1s linear infinite', margin: '0 auto 12px', color: '#818cf8' }} />
-          <p style={{ fontSize: 14 }}>Loading your dashboard activity...</p>
+        <div className="py-16 text-center">
+          <div className="w-10 h-10 rounded-full border-2 border-primary border-t-transparent animate-spin mx-auto mb-2" />
+          <p className="text-body-sm font-body-sm text-on-surface-variant">Syncing with municipal database...</p>
         </div>
-      ) : activeTab === 'reports' ? (
-        /* TAB 1: MY REPORTED ITEMS */
-        reports.length === 0 ? (
-          <div style={{
-            background: 'rgba(18, 18, 22, 0.6)',
-            border: '1px dashed rgba(255, 255, 255, 0.1)',
-            borderRadius: 20,
-            padding: 48,
-            textAlign: 'center'
-          }}>
-            <Package size={40} color="#71717a" style={{ margin: '0 auto 12px' }} />
-            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#fafafa', marginBottom: 6 }}>No Reported Items Yet</h3>
-            <p style={{ color: '#71717a', fontSize: 14, marginBottom: 20 }}>
-              You haven't submitted any lost or found item reports.
-            </p>
-            <Link
-              to="/submit-item"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '10px 20px',
-                borderRadius: 12,
-                background: '#6366f1',
-                color: 'white',
-                fontWeight: 700,
-                fontSize: 14,
-                textDecoration: 'none'
-              }}
-            >
-              <Plus size={16} /> Report an Item Now
-            </Link>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {reports.map((item) => {
-              const isLost = (item.type || item.itemType) === 'lost'
-              const isResolved = item.status === 'Resolved'
-
-              return (
-                <div
-                  key={item._id}
-                  style={{
-                    background: 'rgba(18, 18, 22, 0.85)',
-                    border: '1px solid rgba(255, 255, 255, 0.08)',
-                    borderRadius: 18,
-                    padding: '16px 20px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    flexWrap: 'wrap',
-                    gap: 16
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                    <img
-                      src={item.imageUrl}
-                      alt={item.title}
-                      style={{ width: 68, height: 68, borderRadius: 12, objectFit: 'cover', border: '1px solid #27272a' }}
-                    />
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                        <span style={{
-                          fontSize: 10,
-                          fontWeight: 800,
-                          textTransform: 'uppercase',
-                          padding: '2px 8px',
-                          borderRadius: 6,
-                          background: isLost ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)',
-                          color: isLost ? '#f87171' : '#34d399'
-                        }}>
-                          {isLost ? 'Lost' : 'Found'}
-                        </span>
-                        <span style={{ fontSize: 12, color: '#818cf8', fontWeight: 600 }}>
-                          {item.category}
-                        </span>
-                      </div>
-                      <h3 style={{ fontSize: 16, fontWeight: 700, color: '#fafafa', margin: '0 0 4px' }}>
-                        {item.title}
-                      </h3>
-                      <p style={{ fontSize: 12, color: '#71717a', margin: 0 }}>
-                        Reported on {new Date(item.date || item.createdAt).toLocaleDateString()} • {item.location?.addressText || 'Location recorded'}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <button
-                      onClick={() => handleToggleStatus(item._id, item.status)}
-                      style={{
-                        padding: '8px 14px',
-                        borderRadius: 10,
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
-                        background: isResolved ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255, 255, 255, 0.05)',
-                        color: isResolved ? '#34d399' : '#e4e4e7',
-                        fontSize: 13,
-                        fontWeight: 600,
-                        cursor: 'pointer'
-                      }}
-                    >
-                      {isResolved ? 'Status: Resolved' : 'Mark Resolved'}
-                    </button>
-                    <Link
-                      to={`/item/${item._id}`}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 6,
-                        padding: '8px 14px',
-                        borderRadius: 10,
-                        background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
-                        color: 'white',
-                        fontSize: 13,
-                        fontWeight: 700,
-                        textDecoration: 'none'
-                      }}
-                    >
-                      <span>Manage Claims</span>
-                      <ChevronRight size={15} />
-                    </Link>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )
-      ) : activeTab === 'claims' ? (
-        /* TAB 2: MY SUBMITTED CLAIMS */
-        claims.length === 0 ? (
-          <div style={{
-            background: 'rgba(18, 18, 22, 0.6)',
-            border: '1px dashed rgba(255, 255, 255, 0.1)',
-            borderRadius: 20,
-            padding: 48,
-            textAlign: 'center'
-          }}>
-            <ShieldCheck size={40} color="#71717a" style={{ margin: '0 auto 12px' }} />
-            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#fafafa', marginBottom: 6 }}>No Submitted Claims</h3>
-            <p style={{ color: '#71717a', fontSize: 14, marginBottom: 20 }}>
-              You haven't submitted any ownership claims for community listings.
-            </p>
-            <Link
-              to="/"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '10px 20px',
-                borderRadius: 12,
-                background: '#6366f1',
-                color: 'white',
-                fontWeight: 700,
-                fontSize: 14,
-                textDecoration: 'none'
-              }}
-            >
-              Browse Public Feed
-            </Link>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {claims.map((claim) => {
-              const statusTag = claim.status === 'approved'
-                ? { label: 'Approved', bg: 'rgba(16, 185, 129, 0.15)', text: '#34d399', border: 'rgba(16, 185, 129, 0.3)' }
-                : claim.status === 'rejected'
-                ? { label: 'Rejected', bg: 'rgba(239, 68, 68, 0.15)', text: '#f87171', border: 'rgba(239, 68, 68, 0.3)' }
-                : { label: 'Pending Review', bg: 'rgba(245, 158, 11, 0.15)', text: '#fbbf24', border: 'rgba(245, 158, 11, 0.3)' }
-
-              return (
-                <div
-                  key={claim._id}
-                  style={{
-                    background: 'rgba(18, 18, 22, 0.85)',
-                    border: '1px solid rgba(255, 255, 255, 0.08)',
-                    borderRadius: 18,
-                    padding: 20,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 12
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                      {claim.item?.imageUrl && (
-                        <img
-                          src={claim.item.imageUrl}
-                          alt={claim.item?.title || 'Item'}
-                          style={{ width: 56, height: 56, borderRadius: 10, objectFit: 'cover' }}
-                        />
-                      )}
-                      <div>
-                        <h4 style={{ fontSize: 16, fontWeight: 700, color: '#fafafa', margin: '0 0 2px' }}>
-                          {claim.item?.title || 'Claimed Listing'}
-                        </h4>
-                        <p style={{ fontSize: 12, color: '#71717a', margin: 0 }}>
-                          Submitted on {new Date(claim.createdAt).toLocaleDateString()}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                      <span style={{
-                        fontSize: 12,
-                        fontWeight: 700,
-                        padding: '4px 12px',
-                        borderRadius: 999,
-                        background: statusTag.bg,
-                        color: statusTag.text,
-                        border: `1px solid ${statusTag.border}`
-                      }}>
-                        {statusTag.label}
-                      </span>
-
-                      {claim.item?._id && (
-                        <Link
-                          to={`/item/${claim.item._id}`}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 4,
-                            color: '#818cf8',
-                            fontSize: 13,
-                            fontWeight: 600,
-                            textDecoration: 'none'
-                          }}
-                        >
-                          <span>View Item</span>
-                          <ExternalLink size={14} />
-                        </Link>
-                      )}
-                    </div>
-                  </div>
-
-                  <div style={{ background: '#0e0e11', padding: '12px 14px', borderRadius: 12, border: '1px solid #27272a' }}>
-                    <p style={{ fontSize: 11, fontWeight: 700, color: '#71717a', textTransform: 'uppercase', marginBottom: 4 }}>
-                      Your Submitted Proof:
-                    </p>
-                    <p style={{ fontSize: 13, color: '#e4e4e7', margin: 0, lineHeight: 1.5 }}>
-                      {claim.proofDetails}
-                    </p>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )
       ) : (
-        /* TAB 3: DIRECT CHATS */
-        conversations.length === 0 ? (
-          <div style={{
-            background: 'rgba(18, 18, 22, 0.6)',
-            border: '1px dashed rgba(255, 255, 255, 0.1)',
-            borderRadius: 20,
-            padding: 48,
-            textAlign: 'center'
-          }}>
-            <MessageCircle size={40} color="#71717a" style={{ margin: '0 auto 12px' }} />
-            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#fafafa', marginBottom: 6 }}>No Active Conversations</h3>
-            <p style={{ color: '#71717a', fontSize: 14 }}>
-              Initiate a chat directly from any item detail page.
-            </p>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {conversations.map((c) => {
-              const other = c.participants?.find(p => p._id !== user?._id)
-              return (
-                <Link
-                  key={c._id}
-                  to={`/item/${c.item?._id || c.item}`}
-                  style={{
-                    background: 'rgba(18, 18, 22, 0.85)',
-                    border: '1px solid rgba(255, 255, 255, 0.08)',
-                    borderRadius: 16,
-                    padding: '16px 20px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    textDecoration: 'none',
-                    color: 'inherit',
-                    transition: 'all 0.15s'
-                  }}
-                  onMouseEnter={e => e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.4)'}
-                  onMouseLeave={e => e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)'}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                    <div style={{
-                      width: 44,
-                      height: 44,
-                      borderRadius: 12,
-                      background: '#27272a',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontWeight: 700,
-                      color: '#fafafa'
-                    }}>
-                      {other?.name?.charAt(0).toUpperCase() || 'U'}
-                    </div>
-                    <div>
-                      <h4 style={{ fontSize: 15, fontWeight: 700, color: '#fafafa', margin: '0 0 2px' }}>
-                        {other?.name || 'Community Member'}
-                      </h4>
-                      <p style={{ fontSize: 12, color: '#818cf8', margin: 0 }}>
-                        Regarding: {c.item?.title || 'Reported Item'}
-                      </p>
-                    </div>
-                  </div>
+        <div>
+          {/* TAB 1: REPORTS */}
+          {activeTab === 'reports' && (
+            <div>
+              {reports.length === 0 ? (
+                <EmptyState
+                  icon="post_add"
+                  title="No Incident Reports Logged"
+                  description="You haven't reported any lost or found items yet. File your first report to activate community matching."
+                  actionText="Report an Item"
+                  actionLink="/submit-item"
+                />
+              ) : (
+                <div className="space-y-4">
+                  {reports.map((r)=>{
+                    const itemType=(r.type || r.itemType || 'found').toLowerCase()
+                    const caseId=(r._id || '').slice(-4).toUpperCase()
+                    const isResolved=r.status==='Resolved'
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#71717a', fontSize: 13 }}>
-                    <span>Open Chat</span>
-                    <ChevronRight size={16} />
-                  </div>
-                </Link>
-              )
-            })}
-          </div>
-        )
+                    return(
+                      <div
+                        key={r._id}
+                        className="bg-surface-container-lowest rounded-2xl border border-outline-variant p-5 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4 hover:border-primary transition-all"
+                      >
+                        <div className="flex items-start gap-4">
+                          <div className="w-20 h-20 rounded-xl bg-surface-container overflow-hidden border border-outline-variant shrink-0">
+                            <img
+                              src={r.imageUrl || (r.images && r.images[0]) || "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200' fill='none'%3E%3Crect width='200' height='200' fill='%23F1F5F9'/%3E%3Ccircle cx='100' cy='100' r='20' stroke='%2394A3B8' stroke-width='2'/%3E%3C/svg%3E"}
+                              alt={r.title}
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-label-sm text-label-sm font-bold text-primary">
+                                CASE #LF-{caseId}
+                              </span>
+                              <StatusBadge status={r.status} type={itemType} />
+                              <span className="text-outline text-label-sm font-label-sm">&bull;</span>
+                              <span className="text-on-surface-variant text-label-sm font-label-sm uppercase">{r.category}</span>
+                            </div>
+
+                            <h3 className="text-headline-sm font-headline-sm font-bold text-primary">
+                              <Link to={`/item/${r._id}`} className="hover:text-secondary transition-colors">
+                                {r.title}
+                              </Link>
+                            </h3>
+
+                            <p className="text-body-sm font-body-sm text-on-surface-variant line-clamp-1 max-w-lg">
+                              {r.description || 'No additional notes provided.'}
+                            </p>
+
+                            <div className="flex items-center gap-4 text-label-sm font-label-sm text-outline pt-1">
+                              <span className="flex items-center gap-1">
+                                <span className="material-symbols-outlined text-[14px]">location_on</span>
+                                <span>{formatLocation(r.location, 'Civic Center')}</span>
+                              </span>
+                              <span>Date: {new Date(r.createdAt || r.date).toLocaleDateString()}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2.5 w-full md:w-auto justify-end pt-2 md:pt-0 border-t md:border-t-0 border-outline-variant/60">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleStatus(r._id, r.status)}
+                            className={`px-3.5 py-1.5 rounded-xl text-body-sm font-semibold transition-colors flex items-center gap-1.5 ${
+                              isResolved
+                                ? 'border border-outline-variant text-on-surface-variant hover:bg-surface-container'
+                                : 'bg-secondary hover:bg-on-secondary-container text-on-secondary shadow-xs'
+                            }`}
+                          >
+                            <span className="material-symbols-outlined text-[16px]">
+                              {isResolved ? 'history' : 'check'}
+                            </span>
+                            <span>{isResolved ? 'Re-open Case' : 'Mark Reunited'}</span>
+                          </button>
+
+                          <Link
+                            to={`/item/${r._id}`}
+                            className="px-4 py-1.5 rounded-xl bg-primary hover:bg-primary-container text-on-primary font-semibold text-body-sm flex items-center gap-1 transition-colors"
+                          >
+                            <span>Dossier</span>
+                            <span className="material-symbols-outlined text-[16px]">arrow_forward</span>
+                          </Link>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 2: CLAIMS */}
+          {activeTab === 'claims' && (
+            <div>
+              {claims.length === 0 ? (
+                <EmptyState
+                  icon="assignment_late"
+                  title="No Claims on Record"
+                  description="You have not filed any ownership verification claims yet. If you locate your lost property in the directory, you can submit an official retrieval claim."
+                  actionText="Search Directory"
+                  actionLink="/"
+                />
+              ) : (
+                <div className="space-y-4">
+                  {claims.map((cl) => {
+                    const itemTarget = cl.item || {}
+                    return (
+                      <div
+                        key={cl._id}
+                        className="bg-surface-container-lowest rounded-2xl border border-outline-variant p-5 shadow-xs space-y-3"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <span className="text-label-sm font-label-sm text-outline uppercase block">CLAIM REGISTRATION #{cl._id?.slice(-4).toUpperCase()}</span>
+                            <h3 className="text-headline-sm font-headline-sm font-bold text-primary mt-0.5">
+                              {itemTarget.title ? (
+                                <Link to={`/item/${itemTarget._id || itemTarget}`} className="hover:text-secondary">
+                                  {itemTarget.title}
+                                </Link>
+                              ) : (
+                                'Claimed Property Case'
+                              )}
+                            </h3>
+                            <p className="text-label-sm font-label-sm text-outline">
+                              Submitted: {new Date(cl.createdAt).toLocaleString()}
+                            </p>
+                          </div>
+
+                          <span className={`px-3 py-1 rounded-full text-label-sm font-label-sm font-bold uppercase ${
+                            cl.status === 'approved'
+                              ? 'bg-secondary-container text-on-secondary-fixed-variant'
+                              : cl.status === 'rejected'
+                              ? 'bg-error-container text-on-error-container'
+                              : 'bg-tertiary-fixed text-on-tertiary-fixed-variant'
+                          }`}>
+                            {cl.status}
+                          </span>
+                        </div>
+
+                        <div className="p-3.5 rounded-xl bg-surface-container text-body-sm font-body-sm text-on-surface">
+                          <p className="text-outline text-label-sm font-label-sm mb-1">YOUR PROOF OF OWNERSHIP STATEMENT:</p>
+                          <p>{cl.proofDetails}</p>
+                        </div>
+
+                        {cl.proofImage && (
+                          <div className="w-24 h-24 rounded-lg overflow-hidden border border-outline-variant">
+                            <img src={cl.proofImage} alt="Submitted Proof" className="w-full h-full object-cover" />
+                          </div>
+                        )}
+
+                        <div className="pt-2 flex justify-end">
+                          <Link
+                            to={`/item/${itemTarget._id || itemTarget}`}
+                            className="text-body-sm font-semibold text-primary hover:text-secondary flex items-center gap-1"
+                          >
+                            <span>Open Related Case File</span>
+                            <span className="material-symbols-outlined text-[16px]">arrow_forward</span>
+                          </Link>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 3: CHATS */}
+          {activeTab === 'chats' && (
+            <div>
+              {conversations.length === 0 ? (
+                <EmptyState
+                  icon="chat_bubble_outline"
+                  title="No Coordination Messages"
+                  description="You don't have any active communication threads. When you claim an item or coordinate with a finder, direct channels will appear here."
+                  actionText="Browse Items"
+                  actionLink="/"
+                />
+              ) : (
+                <div className="space-y-3">
+                  {conversations.map((convo) => {
+                    const itemData = convo.item || {}
+                    return (
+                      <div
+                        key={convo._id}
+                        className="bg-surface-container-lowest rounded-2xl border border-outline-variant p-4 shadow-xs flex items-center justify-between gap-4 hover:border-primary transition-all"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-12 h-12 rounded-xl bg-surface-container flex items-center justify-center text-primary">
+                            <span className="material-symbols-outlined text-[24px]">chat</span>
+                          </div>
+                          <div>
+                            <h4 className="text-body-md font-bold text-primary">
+                              Case: {itemData.title || 'Property Coordination'}
+                            </h4>
+                            <p className="text-label-sm font-label-sm text-outline">
+                              Channel ID: #{convo._id?.slice(-6).toUpperCase()} &bull; Last updated {new Date(convo.updatedAt || convo.createdAt).toLocaleDateString()}
+                            </p>
+                          </div>
+                        </div>
+
+                        <Link
+                          to={`/item/${itemData._id || itemData}`}
+                          className="px-4 py-2 rounded-xl bg-primary text-on-primary text-body-sm font-semibold flex items-center gap-1 shadow-xs hover:bg-primary-container transition-colors"
+                        >
+                          <span>Open Channel</span>
+                          <span className="material-symbols-outlined text-[16px]">open_in_new</span>
+                        </Link>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       )}
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   )
 }

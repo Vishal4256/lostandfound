@@ -7,13 +7,17 @@ const {
   createListing,
   getMyItems,
   searchVectorMatches,
+  getItemStats,
   getItemById,
+  reverseGeocode,
   updateItemStatus,
   deleteItem
 } = require('../controllers/itemController');
 
-// Public item feed & search
+// Public item feed, search & reverse geocoding
 router.get('/', getAllItems);
+router.get('/stats', getItemStats);
+router.get('/reverse-geocode', reverseGeocode);
 router.post('/search', uploadSingle('image'), searchVectorMatches);
 router.get('/my-items', protect, getMyItems);
 router.get('/:id', getItemById);

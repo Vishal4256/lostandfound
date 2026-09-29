@@ -110,3 +110,40 @@ exports.getMe = async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error fetching user profile' });
   }
 };
+
+/**
+ * Reset user password
+ * Route: POST /api/auth/reset-password
+ */
+exports.resetPassword = async (req, res) => {
+  try {
+    const { email, newPassword } = req.body;
+
+    if (!email || typeof email !== 'string' || !email.trim() ||
+        !newPassword || typeof newPassword !== 'string') {
+      return res.status(400).json({ success: false, message: 'Please provide valid email and new password' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 6 characters long' });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+    const user = await User.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'No account registered with this email address' });
+    }
+
+    user.passwordHash = newPassword;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Password has been reset successfully. You can now sign in.'
+    });
+  } catch (err) {
+    console.error('Reset password error:', err);
+    res.status(500).json({ success: false, message: 'Server error while resetting password' });
+  }
+};

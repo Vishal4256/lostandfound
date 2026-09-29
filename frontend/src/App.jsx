@@ -8,6 +8,7 @@ import Home from './pages/Home'
 import SubmitItem from './pages/SubmitItem'
 import ItemDetail from './pages/ItemDetail'
 import Dashboard from './pages/Dashboard'
+import Profile from './pages/Profile'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import NotFound from './pages/NotFound'
@@ -17,7 +18,7 @@ function App() {
     <BrowserRouter>
       <AuthProvider>
         <SocketProvider>
-          <Toaster position="top-right" richColors theme="dark" />
+          <Toaster position="top-right" richColors theme="light" />
           <Routes>
             {/* Public Authentication Pages */}
             <Route path="/login" element={<Login />} />
@@ -55,7 +56,7 @@ function App() {
                 path="/profile"
                 element={
                   <ProtectedRoute>
-                    <Dashboard />
+                    <Profile />
                   </ProtectedRoute>
                 }
               />

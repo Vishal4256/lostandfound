@@ -15,9 +15,10 @@ router.get('/my-claims', protect, getMyClaims);
 // Item specific claims (Reporter view)
 router.get('/item/:itemId', protect, getItemClaims);
 
-// Submit a claim on an item (supports both POST /api/claims and POST /api/claims/:itemId)
+// Submit a claim on an item (supports both POST /api/claims, POST /api/claims/:itemId, and POST /api/claims/item/:itemId)
 router.post('/', protect, uploadSingle('proofImage'), submitClaim);
 router.post('/:itemId', protect, uploadSingle('proofImage'), submitClaim);
+router.post('/item/:itemId', protect, uploadSingle('proofImage'), submitClaim);
 
 // Resolve claim (Approve / Reject by Reporter)
 router.patch('/:claimId/resolve', protect, resolveClaim);

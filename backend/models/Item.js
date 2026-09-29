@@ -27,9 +27,41 @@ const itemSchema = new mongoose.Schema({
         'Wallets',
         'IDs',
         'Books',
-        'Other'
+        'Other',
+        'Wallets & IDs',
+        'Pets & Animals',
+        'Keys & Access Cards',
+        'Bags & Luggage',
+        'Jewelry & Watches',
+        'Documents & Portfolios',
+        'Other Civic Item'
       ],
       message: '`{VALUE}` is not a supported category'
+    }
+  },
+  subCategory: {
+    type: String,
+    trim: true,
+    default: '',
+    maxlength: [100, 'Subcategory cannot exceed 100 characters']
+  },
+  confidentialVerification: {
+    type: String,
+    trim: true,
+    default: '',
+    maxlength: [2000, 'Confidential verification details cannot exceed 2000 characters'],
+    select: false
+  },
+  contactPreference: {
+    type: String,
+    enum: ['chat', 'relay', 'direct', 'In-App Chat (Secure)', 'Civic Desk Relay', 'Direct Phone Call'],
+    default: 'chat',
+    set: function(val) {
+      if (!val) return 'chat';
+      const clean = val.toLowerCase();
+      if (clean.includes('relay') || clean.includes('desk')) return 'relay';
+      if (clean.includes('direct') || clean.includes('phone') || clean.includes('call')) return 'direct';
+      return 'chat';
     }
   },
   // Supports both itemType and type ('lost' | 'found')

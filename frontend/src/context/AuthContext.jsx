@@ -81,6 +81,11 @@ export const AuthProvider = ({ children }) => {
     throw new Error(data.message || 'Registration failed')
   }
 
+  const resetPassword = async (email, newPassword) => {
+    const { data } = await api.post('/api/auth/reset-password', { email, newPassword })
+    return data
+  }
+
   return (
     <AuthContext.Provider value={{
       user,
@@ -88,6 +93,7 @@ export const AuthProvider = ({ children }) => {
       loading,
       login,
       register,
+      resetPassword,
       logout,
       setUser,
       isAuthenticated: !!token
@@ -97,6 +103,7 @@ export const AuthProvider = ({ children }) => {
   )
 }
 
+// eslint-disable-next-line react/only-export-components
 export const useAuth = () => {
   const ctx = useContext(AuthContext)
   if (!ctx) throw new Error('useAuth must be used within an AuthProvider')

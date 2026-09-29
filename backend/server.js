@@ -62,7 +62,7 @@ app.get('/api/health', (req, res) => {
 });
 
 // 404 Handler for undefined API routes
-app.use('/api/*', (req, res) => {
+app.use('/api', (req, res) => {
   res.status(404).json({
     success: false,
     message: `Cannot ${req.method} ${req.originalUrl}`

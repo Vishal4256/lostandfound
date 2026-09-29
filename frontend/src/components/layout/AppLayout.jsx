@@ -1,13 +1,15 @@
 import { Outlet } from 'react-router-dom'
 import Navbar from './Navbar'
+import Footer from './Footer'
 
-const AppLayout = () => (
-  <div style={{ background: 'var(--bg)', minHeight: '100vh' }}>
-    <Navbar />
-    <main style={{ maxWidth: 1280, margin: '0 auto', padding: '0 24px 80px' }}>
-      <Outlet />
-    </main>
-  </div>
-)
-
-export default AppLayout
+export default function AppLayout() {
+  return (
+    <div className="min-h-screen flex flex-col bg-background text-on-surface">
+      <Navbar />
+      <main className="flex-1 w-full">
+        <Outlet />
+      </main>
+      <Footer />
+    </div>
+  )
+}

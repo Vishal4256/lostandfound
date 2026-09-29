@@ -1,21 +1,16 @@
 const multer = require('multer');
 const path = require('path');
-
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
 const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp'];
-
 const fileFilter = (req, file, cb) => {
   const ext = path.extname(file.originalname).toLowerCase();
-  
   if (!ALLOWED_MIME_TYPES.includes(file.mimetype) || !ALLOWED_EXTENSIONS.includes(ext)) {
     const error = new Error('Invalid file type. Only JPEG, PNG, and WebP images are allowed.');
     error.statusCode = 400;
     return cb(error, false);
   }
-  
   cb(null, true);
 };
-
 const multerInstance = multer({
   storage: multer.memoryStorage(),
   limits: {
