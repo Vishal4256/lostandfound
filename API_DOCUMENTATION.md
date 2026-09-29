@@ -1,4 +1,4 @@
-# FindIt AI — Comprehensive API Documentation
+# HavenFind — Comprehensive API Documentation
 
 Base URL: `/api`
 

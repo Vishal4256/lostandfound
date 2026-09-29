@@ -1,8 +1,8 @@
-# FindIt AI — System Architecture & Design Document
+# HavenFind — System Architecture & Design Document
 
 ## 1. High-Level Architecture
 
-FindIt AI is an enterprise-grade full-stack platform uniting modern web application design, vector similarity search, and automated claim resolution.
+HavenFind is an enterprise-grade full-stack platform uniting modern web application design, vector similarity search, and automated claim resolution.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐

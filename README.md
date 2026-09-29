@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🧭 FindIt — AI-Powered Lost & Found Platform
+# 🧭 HavenFind — Civic Lost & Found Recovery Network
 
 <p align="center">
   <b>Reuniting lost items with their owners using Multimodal AI Visual Search, Ownership Verification, and Real-Time Chat.</b>
@@ -17,7 +17,7 @@
 
 <br />
 
-[Explore Features](#-key-features) • [Architecture](#-architecture) • [Getting Started](#-getting-started) • [Atlas Vector Search](#-mongodb-atlas-vector-search-setup) • [API Reference](#-api-endpoints) • [Testing](#-testing--qa)
+[Explore Features](#-key-features) • [Architecture](#-architecture) • [Getting Started](#-getting-started) • [Atlas Vector Search](#-mongodb-atlas-vector-search-setup) • [API Reference](#-api-endpoints) • [Validation](#-validation--quality-checks)
 
 </div>
 
@@ -25,7 +25,7 @@
 
 ## 📖 Overview
 
-**FindIt** is a production-grade, full-stack platform designed to modernize how lost property is reported, visually matched, claimed, and recovered. Unlike legacy lost-and-found boards that rely purely on text keywords, **FindIt** leverages **local Vision-Language AI embeddings (`CLIP ViT-B/32`)** to find visual matches even when titles or descriptions vary completely.
+**HavenFind** is a production-grade, full-stack civic lost-and-found recovery platform designed to modernize how lost property is reported, visually matched, claimed, and recovered. Unlike legacy lost-and-found boards that rely purely on text keywords, **HavenFind** leverages **local Vision-Language AI embeddings (`CLIP ViT-B/32`)** to find visual matches even when titles or descriptions vary completely.
 
 Key highlights:
 - **Multimodal Search**: Supports keyword queries, structured filters (category, status, type), and direct image upload matching.
@@ -281,18 +281,15 @@ For comprehensive request/response payloads and error codes, refer to [API_DOCUM
 | `GET` | `/api/chat/conversations/:id/messages` | Fetch message history for a conversation | ✅ |
 | `POST` | `/api/chat/conversations/:id/messages` | Post a new message to conversation | ✅ |
 
----
+## 🧪 Validation & Quality Checks
 
-## 🧪 Testing & QA
-
-Run the automated test suite covering Authentication, Item Flow, AI Vector Pipeline, Claim Security, and Chat Permissions:
+Run frontend linting and production build verification:
 
 ```bash
-# In backend/
-node test_full_audit_suite.js
+# In frontend/
+npm run lint
+npm run build
 ```
-
-Detailed test procedures and verification matrices are available in [TESTING.md](TESTING.md).
 
 ---
 
@@ -301,13 +298,11 @@ Detailed test procedures and verification matrices are available in [TESTING.md]
 ```text
 lostandfound/
 ├── backend/
-│   ├── config/                 # Cloudinary & DB configurations
 │   ├── controllers/            # Route controllers (auth, items, claims, chat)
 │   ├── middleware/             # JWT auth, RBAC, Multer upload, rate limiter
 │   ├── models/                 # Mongoose schemas (User, Item, Claim, Conversation, Message)
 │   ├── routes/                 # Express route definitions
 │   ├── services/               # CLIP AI embedding generation service
-│   ├── test_full_audit_suite.js# Full automated end-to-end audit test suite
 │   ├── .env.example            # Environment variables template
 │   ├── package.json            # Node.js dependencies & scripts
 │   └── server.js               # Express app & Socket.io server bootstrap
@@ -315,13 +310,14 @@ lostandfound/
 ├── frontend/
 │   ├── src/
 │   │   ├── components/         # Reusable UI components, modals, feeds
-│   │   │   ├── layout/         # Navbar, layout wrapper
-│   │   │   ├── CreateListingModal.jsx
+│   │   │   ├── common/         # StatCard, StatusBadge, ItemCard, EmptyState
+│   │   │   ├── layout/         # Navbar, Footer, AppLayout
 │   │   │   ├── MatchResultsGrid.jsx
 │   │   │   └── VisualSearchModal.jsx
 │   │   ├── context/            # React AuthContext & SocketContext
-│   │   ├── pages/              # Route pages (Home, SubmitItem, ItemDetail, Dashboard, Login, Register)
+│   │   ├── pages/              # Route pages (Home, SubmitItem, ItemDetail, Dashboard, Login, Register, Profile)
 │   │   ├── services/           # Centralized Axios API client (api.js)
+│   │   ├── utils/              # Formatting helpers
 │   │   ├── App.jsx             # Routes & Providers
 │   │   └── index.css           # Global theme variables & Tailwind styles
 │   ├── index.html              # HTML entry template
@@ -330,7 +326,6 @@ lostandfound/
 │
 ├── API_DOCUMENTATION.md        # Comprehensive REST & WebSocket API specification
 ├── ARCHITECTURE.md             # System architecture, CLIP pipeline & security design
-├── TESTING.md                  # Test suites, scenarios & execution instructions
 └── README.md                   # Project documentation
 ```
 
