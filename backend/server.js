@@ -10,6 +10,7 @@ const authRoutes = require('./routes/authRoutes');
 const itemRoutes = require('./routes/itemRoutes');
 const claimRoutes = require('./routes/claimRoutes');
 const chatRoutes = require('./routes/chatRoutes');
+const ragRoutes = require('./routes/ragRoutes');
 const { generateImageEmbedding } = require('./services/embeddingService');
 
 const app = express();
@@ -51,6 +52,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/items', itemRoutes);
 app.use('/api/claims', claimRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/ai', ragRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

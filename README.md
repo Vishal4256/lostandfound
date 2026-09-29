@@ -17,7 +17,7 @@
 
 <br />
 
-[Explore Features](#-key-features) • [Architecture](#-architecture) • [Getting Started](#-getting-started) • [Atlas Vector Search](#-mongodb-atlas-vector-search-setup) • [API Reference](#-api-endpoints) • [Validation](#-validation--quality-checks)
+[Explore Features](#-key-features) • [What is RAG?](#-what-is-rag--how-is-it-used-in-havenfind) • [Architecture](#-architecture) • [Getting Started](#-getting-started) • [Atlas Vector Search](#-mongodb-atlas-vector-search-setup) • [API Reference](#-api-endpoints) • [Validation](#-validation--quality-checks)
 
 </div>
 
@@ -38,6 +38,7 @@ Key highlights:
 
 | Feature | Description |
 | :--- | :--- |
+| 🤖 **Grounded RAG Recovery Assistant** | Natural language inquiry powered by **hybrid CLIP vector retrieval** + **Google Gemini LLM generation** returning grounded matches and real report links. |
 | 🔍 **Multimodal Visual Search** | Upload an image to find similar lost or found items using **512-dimensional CLIP embeddings** and cosine vector similarity. |
 | 🛡️ **Ownership Claim System** | Submit ownership claims with proof details/images. Item reporters can review, approve, or reject claims with automatic status updates (`Resolved`). |
 | ⚡ **Real-Time In-App Chat** | Integrated Socket.IO messaging with JWT handshake verification, active conversation listings, and dedicated rooms. |
@@ -46,6 +47,68 @@ Key highlights:
 | 🏷️ **Lifecycle Status Tracking** | Dynamic listing lifecycle (`Active` ➔ `Pending Claim` ➔ `Resolved`) ensuring transparency and preventing stale entries. |
 | 🎨 **State-of-the-Art Dark UI** | Glassmorphic dark aesthetic built with **Tailwind CSS v4**, **Framer Motion**, and **Sonner notifications**. |
 | 📱 **Responsive & Accessible** | Mobile-first layout, semantic HTML, Radix UI modals, and intuitive UX states. |
+
+---
+
+## 🧠 What is RAG & How is it Used in HavenFind?
+
+### What is RAG (Retrieval-Augmented Generation)?
+**RAG (Retrieval-Augmented Generation)** is an advanced AI architecture that prevents Large Language Models (LLMs) like Google Gemini from hallucinating by grounding their answers in **real-time data retrieved from a live database**.
+
+In a normal chatbot without RAG:
+```text
+User Question ➔ LLM (Guesses from static training weights) ➔ High Risk of Fake / Outdated Data
+```
+
+In a **RAG-powered system**:
+```text
+User Question ➔ Live Database Search (Retrieves Real Records) ➔ Feeds Real Records into LLM ➔ 100% Grounded Answer
+```
+
+---
+
+### What is RAG Used For in HavenFind?
+
+In HavenFind, RAG powers the **AI Recovery Assistant** — an intelligent civic recovery agent that helps citizens locate lost property using everyday natural language (e.g., *"I lost my black leather wallet near Phagwara yesterday with a silver zipper"*).
+
+Rather than forcing users to guess rigid search filters, HavenFind's RAG system executes a 5-stage pipeline:
+
+```mermaid
+flowchart TD
+    A["👤 User Query<br/>('Lost black wallet in Phagwara')"] --> B["⚡ CLIP Multimodal Text Encoder<br/>(AutoTokenizer + Projection)"]
+    B --> C["512-Dimensional Vector Embedding"]
+    C --> D["🔍 Hybrid Retrieval Engine<br/>(MongoDB Atlas Vectors + Lexical Match)"]
+    D --> E["📋 Filter Safe Public Candidates<br/>(Status: Active • Excludes Confidential Info)"]
+    E --> F["📝 Grounded Context Block<br/>(Real Item Titles, Locations, IDs)"]
+    F --> G["🤖 Google Gemini LLM<br/>(gemini-2.5-flash with Grounding Rules)"]
+    G --> H["💬 Verified Response + Real Item Cards<br/>(Direct links to /item/:id)"]
+```
+
+#### Key Capabilities of HavenFind RAG:
+1. **Zero Hallucinations**:
+   - If a citizen inquires about an item that does **not** exist in MongoDB (e.g., *"I lost a red bicycle in Delhi"*), the retriever returns 0 matches. Gemini is strictly instructed never to invent records, responding with complete honesty: *"I searched the HavenFind Civic Registry, but found no active public reports matching your description."*
+2. **Cross-Modal Shared Vector Space (`CLIP ViT-B/32`)**:
+   - When a finder posts a picture, CLIP generates a 512-D image vector.
+   - When a searcher types natural language text, CLIP encodes the query into the **exact same 512-dimensional vector space**.
+   - This enables cross-modal similarity matching (text matches photo!).
+3. **Strict Confidentiality Protection**:
+   - Items often carry confidential verification markers (hidden engravings, private serial numbers) used to verify authentic ownership.
+   - The RAG retriever **strictly excludes** `confidentialVerification` (`select: '-confidentialVerification'`) so private proof is never exposed to the public or injected into LLM prompts.
+4. **Actionable Civic Recovery Links**:
+   - Every candidate referenced by the AI corresponds to a real database entry, rendering interactive cards with **"View Report"** buttons that navigate directly to `/item/:id` where the owner can file an official claim.
+
+---
+
+### 📊 RAG vs. Traditional Search vs. Generic Chatbots
+
+| Capability | Traditional Search | Generic AI Chatbot | HavenFind RAG AI Recovery |
+| :--- | :---: | :---: | :---: |
+| **Natural Language Queries** | ❌ Rigid keywords only | ✅ High | ✅ High |
+| **Live MongoDB Registry Access** | ✅ Yes | ❌ No | ✅ Yes (Real-time live retrieval) |
+| **Cross-Modal (Text-to-Photo Match)** | ❌ No | ❌ No | ✅ Yes (CLIP 512-D shared space) |
+| **Hallucination Risk** | None | ⚠️ High (Fabricates fake cases) | 🛡️ **Zero** (Grounded strictly in DB) |
+| **Confidential Proof Protection** | Variable | ❌ Risk of data leakage | 🛡️ **Enforced server-side exclusion** |
+| **Interactive Action Links** | Direct links | ❌ Dead or hallucinated URLs | ✅ Verified `/item/:id` report cards |
 
 ---
 
@@ -281,6 +344,11 @@ For comprehensive request/response payloads and error codes, refer to [API_DOCUM
 | `GET` | `/api/chat/conversations/:id/messages` | Fetch message history for a conversation | ✅ |
 | `POST` | `/api/chat/conversations/:id/messages` | Post a new message to conversation | ✅ |
 
+### 🤖 AI Recovery Assistant
+| Method | Endpoint | Description | Auth Required |
+| :--- | :--- | :--- | :---: |
+| `POST` | `/api/ai/recovery` | Natural language inquiry using hybrid CLIP vector retrieval + Gemini LLM | ✅ |
+
 ## 🧪 Validation & Quality Checks
 
 Run frontend linting and production build verification:
@@ -298,11 +366,11 @@ npm run build
 ```text
 lostandfound/
 ├── backend/
-│   ├── controllers/            # Route controllers (auth, items, claims, chat)
+│   ├── controllers/            # Route controllers (auth, items, claims, chat, rag)
 │   ├── middleware/             # JWT auth, RBAC, Multer upload, rate limiter
 │   ├── models/                 # Mongoose schemas (User, Item, Claim, Conversation, Message)
-│   ├── routes/                 # Express route definitions
-│   ├── services/               # CLIP AI embedding generation service
+│   ├── routes/                 # Express route definitions (auth, items, claims, chat, ai)
+│   ├── services/               # CLIP embedding & Grounded RAG Gemini services
 │   ├── .env.example            # Environment variables template
 │   ├── package.json            # Node.js dependencies & scripts
 │   └── server.js               # Express app & Socket.io server bootstrap
@@ -312,6 +380,7 @@ lostandfound/
 │   │   ├── components/         # Reusable UI components, modals, feeds
 │   │   │   ├── common/         # StatCard, StatusBadge, ItemCard, EmptyState
 │   │   │   ├── layout/         # Navbar, Footer, AppLayout
+│   │   │   ├── AiRecoveryAssistant.jsx # Grounded RAG Chat Drawer
 │   │   │   ├── MatchResultsGrid.jsx
 │   │   │   └── VisualSearchModal.jsx
 │   │   ├── context/            # React AuthContext & SocketContext

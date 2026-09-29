@@ -225,3 +225,50 @@ Sends a message into the conversation and emits a real-time event to the convers
 - **Server to Client:**
   - `new_message`: Delivered in real-time when a participant sends a message.
   - `user_typing`: Delivered when another participant is typing.
+
+---
+
+## 6. AI Recovery Assistant Endpoints (`/api/ai`)
+
+### `POST /api/ai/recovery` [Protected]
+Executes a natural language RAG inquiry against the verified HavenFind civic registry. Uses hybrid 512-D CLIP vector matching, lexical search, and Google Gemini generation. Rate-limited to 20 queries per 5 minutes.
+
+- **Request Headers:**
+  - `Authorization: Bearer <token>`
+- **Request Body:**
+  ```json
+  {
+    "query": "I lost my black leather wallet near Phagwara yesterday",
+    "conversationHistory": [
+      { "role": "user", "text": "Did anyone turn in a wallet?" },
+      { "role": "assistant", "text": "I found 2 potentially relevant public reports..." }
+    ]
+  }
+  ```
+- **Responses:**
+  - `200 OK`:
+    ```json
+    {
+      "success": true,
+      "answer": "I found 1 potentially relevant public report in the HavenFind Civic Registry: ...",
+      "matches": [
+        {
+          "itemId": "6abc1282384e59de6594db9a",
+          "title": "Black Leather Wallet",
+          "type": "found",
+          "category": "Wallets & IDs",
+          "location": "Phagwara, Punjab",
+          "imageUrl": "https://...",
+          "date": "2026-09-30",
+          "score": 0.891,
+          "reason": "5 matching term(s) in title/description • High visual vector similarity (92%)"
+        }
+      ],
+      "retrievedCount": 1,
+      "query": "I lost my black leather wallet near Phagwara yesterday"
+    }
+    ```
+  - `400 Bad Request`: Query is missing or exceeds 500 characters.
+  - `401 Unauthorized`: Missing or invalid Bearer token.
+  - `429 Too Many Requests`: Rate limit exceeded.
+

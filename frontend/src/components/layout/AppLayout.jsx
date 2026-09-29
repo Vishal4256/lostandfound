@@ -1,6 +1,7 @@
 import { Outlet } from 'react-router-dom'
 import Navbar from './Navbar'
 import Footer from './Footer'
+import AiRecoveryAssistant from '../AiRecoveryAssistant'
 
 export default function AppLayout() {
   return (
@@ -9,6 +10,7 @@ export default function AppLayout() {
       <main className="flex-1 w-full">
         <Outlet />
       </main>
+      <AiRecoveryAssistant />
       <Footer />
     </div>
   )

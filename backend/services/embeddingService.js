@@ -74,23 +74,42 @@ async function generateImageEmbedding(imageInput) {
   }
 }
 
+let clipTokenizer = null;
+let clipTextModel = null;
+
 /**
- * Generates an embedding from a text string (e.g. for text-based semantic search).
+ * Initializes CLIP text tokenizer and projection model
+ */
+async function getTextPipeline() {
+  if (clipTokenizer && clipTextModel) {
+    return { tokenizer: clipTokenizer, textModel: clipTextModel };
+  }
+  const { AutoTokenizer, CLIPTextModelWithProjection } = await import('@xenova/transformers');
+  clipTokenizer = await AutoTokenizer.from_pretrained('Xenova/clip-vit-base-patch32');
+  clipTextModel = await CLIPTextModelWithProjection.from_pretrained('Xenova/clip-vit-base-patch32', { quantized: true });
+  return { tokenizer: clipTokenizer, textModel: clipTextModel };
+}
+
+/**
+ * Generates an embedding from a text string using CLIP's shared multimodal text encoder.
+ * The output is in the exact same 512-dimensional vector space as the image embeddings.
  * 
- * @param {string} text - The input text string
+ * @param {string} text - The input query string
  * @returns {Promise<number[]>} - 512-dimensional float array
  */
 async function generateTextEmbedding(text) {
-    try {
-        const extractor = await getPipeline();
-        // Pass string to get text embeddings
-        const output = await extractor(text);
-        const embeddingArray = Array.from(output.data);
-        return embeddingArray;
-    } catch (error) {
-        console.error('Error generating text embedding:', error);
-        throw new Error('Failed to generate text embedding');
-    }
+  if (!text || typeof text !== 'string' || !text.trim()) {
+    throw new Error('Text input cannot be empty');
+  }
+  try {
+    const { tokenizer, textModel } = await getTextPipeline();
+    const textInputs = tokenizer([text.trim()], { padding: true, truncation: true });
+    const { text_embeds } = await textModel(textInputs);
+    return Array.from(text_embeds.data);
+  } catch (error) {
+    console.error('Error generating text embedding:', error);
+    throw new Error('Failed to generate text embedding');
+  }
 }
 
 module.exports = {

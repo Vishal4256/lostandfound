@@ -223,10 +223,17 @@ export default function Home() {
               </Link>
               <button
                 onClick={() => setSearchModal(true)}
-                className="w-full sm:w-auto px-5 py-3.5 rounded-xl bg-secondary-container hover:bg-secondary-fixed text-on-secondary-fixed-variant font-semibold flex items-center justify-center gap-2 shadow-xs active:scale-[0.98] transition-all"
+                className="w-full sm:w-auto px-5 py-3.5 rounded-xl bg-secondary-container hover:bg-secondary-fixed text-on-secondary-fixed-variant font-semibold flex items-center justify-center gap-2 shadow-xs active:scale-[0.98] transition-all cursor-pointer"
               >
                 <span className="material-symbols-outlined text-[20px]">psychology</span>
                 <span>AI Photo Search</span>
+              </button>
+              <button
+                onClick={() => window.dispatchEvent(new CustomEvent('open-rag-assistant'))}
+                className="w-full sm:w-auto px-5 py-3.5 rounded-xl bg-surface-container-high hover:bg-surface-container-highest border border-secondary/40 text-secondary font-semibold flex items-center justify-center gap-2 shadow-xs active:scale-[0.98] transition-all cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[20px]">auto_awesome</span>
+                <span>Ask AI Assistant</span>
               </button>
             </div>
 
