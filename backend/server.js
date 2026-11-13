@@ -10,13 +10,17 @@ const authRoutes = require('./routes/authRoutes');
 const itemRoutes = require('./routes/itemRoutes');
 const claimRoutes = require('./routes/claimRoutes');
 const chatRoutes = require('./routes/chatRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 const ragRoutes = require('./routes/ragRoutes');
 const { generateImageEmbedding } = require('./services/embeddingService');
 
 const app = express();
 const server = http.createServer(app);
 
-const JWT_SECRET = process.env.JWT_SECRET || 'lostandfound_super_secret_key_change_in_prod';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET environment variable is not defined.');
+}
 const PORT = process.env.PORT || 5000;
 
 const allowedOrigins = [
@@ -52,6 +56,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/items', itemRoutes);
 app.use('/api/claims', claimRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/notifications', notificationRoutes);
 app.use('/api/ai', ragRoutes);
 
 // Health check endpoint
@@ -97,7 +102,58 @@ io.use((socket, next) => {
   }
 });
 
+// Active presence tracker: Map(userId -> Set(socketId))
+const onlineUsers = new Map();
+
+function trackUserConnected(userId, socketId) {
+  if (!userId) return;
+  const uidStr = userId.toString();
+  if (!onlineUsers.has(uidStr)) {
+    onlineUsers.set(uidStr, new Set());
+  }
+  onlineUsers.get(uidStr).add(socketId);
+  io.emit('user_presence', { userId: uidStr, status: 'online' });
+}
+
+function trackUserDisconnected(userId, socketId) {
+  if (!userId) return;
+  const uidStr = userId.toString();
+  if (onlineUsers.has(uidStr)) {
+    const sockets = onlineUsers.get(uidStr);
+    sockets.delete(socketId);
+    if (sockets.size === 0) {
+      onlineUsers.delete(uidStr);
+      io.emit('user_presence', { userId: uidStr, status: 'offline' });
+    }
+  }
+}
+
 io.on('connection', (socket) => {
+  if (socket.userId) {
+    trackUserConnected(socket.userId, socket.id);
+  }
+
+  // Authenticate socket dynamically after connection (e.g. login)
+  socket.on('authenticate', (token) => {
+    if (!token) return;
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      socket.userId = decoded.id;
+      socket.join(`user_${decoded.id}`);
+      trackUserConnected(decoded.id, socket.id);
+    } catch {}
+  });
+
+  // Request list of currently online user IDs
+  socket.on('get_online_users', (callback) => {
+    const list = Array.from(onlineUsers.keys());
+    if (typeof callback === 'function') {
+      callback(list);
+    } else {
+      socket.emit('online_users_list', list);
+    }
+  });
+
   // Join private notification room (only for user's own ID)
   socket.on('join_user_room', (userId) => {
     if (socket.userId && socket.userId.toString() === userId?.toString()) {
@@ -106,14 +162,24 @@ io.on('connection', (socket) => {
   });
 
   // Join specific conversation room with authorization check
-  socket.on('join_conversation', async (conversationId) => {
+  socket.on('join_conversation', async (conversationId, tokenOverride) => {
     if (!conversationId || !mongoose.Types.ObjectId.isValid(conversationId)) return;
-    if (!socket.userId) return;
+
+    let userId = socket.userId;
+    if (!userId && tokenOverride) {
+      try {
+        const decoded = jwt.verify(tokenOverride, JWT_SECRET);
+        userId = decoded.id;
+        socket.userId = userId;
+      } catch {}
+    }
+
+    if (!userId) return;
 
     try {
       const Conversation = require('./models/Conversation');
       const conv = await Conversation.findById(conversationId);
-      if (conv && conv.participants.some(p => p.toString() === socket.userId.toString())) {
+      if (conv && conv.participants.some(p => p.toString() === userId.toString())) {
         socket.join(conversationId.toString());
       }
     } catch (err) {
@@ -125,6 +191,20 @@ io.on('connection', (socket) => {
   socket.on('leave_conversation', (conversationId) => {
     if (conversationId) {
       socket.leave(conversationId.toString());
+    }
+  });
+
+  // Join item / case room for real-time live synchronization
+  socket.on('join_case', (itemId) => {
+    if (itemId && mongoose.Types.ObjectId.isValid(itemId)) {
+      socket.join(`case_${itemId.toString()}`);
+    }
+  });
+
+  // Leave item / case room
+  socket.on('leave_case', (itemId) => {
+    if (itemId) {
+      socket.leave(`case_${itemId.toString()}`);
     }
   });
 
@@ -149,7 +229,11 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('disconnect', () => {});
+  socket.on('disconnect', () => {
+    if (socket.userId) {
+      trackUserDisconnected(socket.userId, socket.id);
+    }
+  });
 });
 
 // ── MongoDB Connection & CLIP Model Pre-warming ──────────────

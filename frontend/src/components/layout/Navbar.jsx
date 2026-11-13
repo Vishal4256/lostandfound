@@ -1,19 +1,135 @@
 import { useState, useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { toast } from 'sonner'
 import { useAuth } from '../../context/AuthContext'
+import { useSocket } from '../../context/SocketContext'
+import api from '../../services/api'
+import { formatTimeAgo } from '../../utils/formatters'
 
 export default function Navbar() {
   const { pathname } = useLocation()
   const navigate = useNavigate()
   const { user, isAuthenticated, logout } = useAuth()
+  const { socket } = useSocket() || {}
+  const [unreadCount, setUnreadCount] = useState(0)
+  const [notifications, setNotifications] = useState([])
+  const [unreadNotifCount, setUnreadNotifCount] = useState(0)
+  const [notifDropdown, setNotifDropdown] = useState(false)
   const [profileDropdown, setProfileDropdown] = useState(false)
   const [mobileMenu, setMobileMenu] = useState(false)
   const [globalSearch, setGlobalSearch] = useState('')
+
+  // Fetch persistent notifications on auth change
+  useEffect(() => {
+    if (!isAuthenticated) {
+      // eslint-disable-next-line react/set-state-in-effect
+      setNotifications([])
+      // eslint-disable-next-line react/set-state-in-effect
+      setUnreadNotifCount(0)
+      return
+    }
+
+    let isMounted = true
+    const fetchNotifications = () => {
+      api.get('/api/notifications')
+        .then(({ data }) => {
+          if (isMounted && data.success) {
+            setNotifications(data.notifications || [])
+            setUnreadNotifCount(data.unreadCount || 0)
+          }
+        })
+        .catch(() => {})
+    }
+
+    fetchNotifications()
+
+    if (socket) {
+      const handleNewNotification = (notif) => {
+        setNotifications((prev) => [notif, ...prev])
+        setUnreadNotifCount((prev) => prev + 1)
+        toast.info(notif.title, {
+          description: notif.message,
+          action: notif.link ? {
+            label: 'View',
+            onClick: () => navigate(notif.link)
+          } : undefined
+        })
+      }
+
+      const handleAllRead = () => {
+        setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
+        setUnreadNotifCount(0)
+      }
+
+      socket.on('new_notification', handleNewNotification)
+      socket.on('all_notifications_read', handleAllRead)
+
+      return () => {
+        isMounted = false
+        socket.off('new_notification', handleNewNotification)
+        socket.off('all_notifications_read', handleAllRead)
+      }
+    }
+
+    return () => {
+      isMounted = false
+    }
+  }, [isAuthenticated, socket, navigate])
+
+  // Fetch unread messages count on auth change
+  useEffect(() => {
+    if (!isAuthenticated) {
+      // eslint-disable-next-line react/set-state-in-effect
+      setUnreadCount(0)
+      return
+    }
+
+    let isMounted = true
+    const fetchUnread = () => {
+      api.get('/api/chat/unread-count')
+        .then(({ data }) => {
+          if (isMounted && data.success) {
+            setUnreadCount(data.unreadCount || 0)
+          }
+        })
+        .catch(() => {})
+    }
+
+    fetchUnread()
+
+    if (socket) {
+      const handleNewMessage = (msg) => {
+        const senderId = (msg.sender?._id || msg.sender)?.toString()
+        if (user?._id && senderId !== user._id.toString()) {
+          setUnreadCount((prev) => prev + 1)
+        }
+      }
+
+      const handleConvRead = () => {
+        fetchUnread()
+      }
+
+      socket.on('new_message', handleNewMessage)
+      socket.on('conversation_read', handleConvRead)
+
+      return () => {
+        isMounted = false
+        socket.off('new_message', handleNewMessage)
+        socket.off('conversation_read', handleConvRead)
+      }
+    }
+
+    return () => {
+      isMounted = false
+    }
+  }, [isAuthenticated, user?._id, socket])
 
   // Close dropdowns on route change
   useEffect(() => {
     // eslint-disable-next-line react/set-state-in-effect
     setProfileDropdown(false)
+    // eslint-disable-next-line react/set-state-in-effect
+    setNotifDropdown(false)
     // eslint-disable-next-line react/set-state-in-effect
     setMobileMenu(false)
   }, [pathname])
@@ -53,10 +169,13 @@ export default function Navbar() {
               256-Bit Encrypted Privacy Shield
             </span>
             <span className="text-outline">|</span>
-            <span className="flex items-center gap-1 font-label-sm text-label-sm">
-              <span className="material-symbols-outlined text-[15px]">call</span>
-              Civic Dispatch: 1-800-555-0192
-            </span>
+            <a
+              href="tel:+918092982304"
+              className="flex items-center gap-1.5 font-label-sm text-label-sm hover:text-secondary-fixed transition-colors"
+            >
+              <span className="material-symbols-outlined text-[15px]">support_agent</span>
+              <span>Helpline &amp; Support: +91 8092982304</span>
+            </a>
           </div>
         </div>
       </aside>
@@ -91,14 +210,19 @@ export default function Navbar() {
               </Link>
               <Link
                 to="/dashboard"
-                className={`flex items-center gap-1.5 transition-colors font-medium text-body-md ${
+                className={`relative flex items-center gap-1.5 transition-colors font-medium text-body-md ${
                   pathname === '/dashboard' || pathname === '/profile'
                     ? 'border-b-2 border-primary text-primary font-semibold pb-0.5'
                     : 'text-on-surface-variant hover:text-primary'
                 }`}
               >
                 <span className="material-symbols-outlined text-body-md">badge</span>
-                {isAuthenticated ? 'My Registry Desk' : 'Verification Desk'}
+                <span>{isAuthenticated ? 'My Registry Desk' : 'Verification Desk'}</span>
+                {isAuthenticated && unreadCount > 0 && (
+                  <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-error text-white text-[10px] font-bold shadow-xs">
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </span>
+                )}
               </Link>
               <a
                 href="/#how-it-works"
@@ -140,6 +264,117 @@ export default function Navbar() {
               <span className="hidden xs:inline">Report Item</span>
               <span className="xs:hidden">Report</span>
             </Link>
+
+            {/* Notifications Bell */}
+            {isAuthenticated && (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNotifDropdown((v) => !v)
+                    setProfileDropdown(false)
+                  }}
+                  className="relative p-2 rounded-xl text-primary hover:bg-surface-container transition-colors cursor-pointer"
+                  aria-label="Civic Notifications"
+                >
+                  <span className="material-symbols-outlined text-[22px]">notifications</span>
+                  {unreadNotifCount > 0 && (
+                    <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-error ring-2 ring-surface-container-lowest animate-pulse" />
+                  )}
+                </button>
+
+                {notifDropdown && (
+                  <div className="absolute right-0 mt-2 w-80 sm:w-96 rounded-2xl bg-surface-container-lowest border border-outline-variant shadow-xl p-3 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+                    <div className="flex items-center justify-between pb-2 border-b border-outline-variant/60 mb-2">
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-body-sm font-bold text-primary">Case Alerts</h4>
+                        {unreadNotifCount > 0 && (
+                          <span className="px-1.5 py-0.2 rounded-full bg-error text-white text-[10px] font-bold">
+                            {unreadNotifCount} new
+                          </span>
+                        )}
+                      </div>
+                      {unreadNotifCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            api.patch('/api/notifications/read-all').then(() => {
+                              setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
+                              setUnreadNotifCount(0)
+                            }).catch(() => {})
+                          }}
+                          className="text-[11px] font-semibold text-secondary hover:underline cursor-pointer"
+                        >
+                          Mark all read
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="max-h-72 overflow-y-auto space-y-2 custom-scrollbar">
+                      {notifications.length === 0 ? (
+                        <div className="py-8 text-center text-on-surface-variant space-y-1">
+                          <span className="material-symbols-outlined text-[28px] text-outline block">notifications_paused</span>
+                          <p className="text-body-sm font-medium">All caught up!</p>
+                          <p className="text-label-sm text-outline">No new case notifications.</p>
+                        </div>
+                      ) : (
+                        notifications.map((notif) => (
+                          <div
+                            key={notif._id}
+                            onClick={() => {
+                              if (!notif.read) {
+                                api.patch(`/api/notifications/${notif._id}/read`).catch(() => {})
+                                setNotifications((prev) =>
+                                  prev.map((n) => (n._id === notif._id ? { ...n, read: true } : n))
+                                )
+                                setUnreadNotifCount((prev) => Math.max(0, prev - 1))
+                              }
+                              setNotifDropdown(false)
+                              if (notif.link) {
+                                navigate(notif.link)
+                              }
+                            }}
+                            className={`p-2.5 rounded-xl transition-all cursor-pointer border ${
+                              notif.read
+                                ? 'bg-surface hover:bg-surface-container border-transparent'
+                                : 'bg-primary/5 hover:bg-primary/10 border-primary/20'
+                            }`}
+                          >
+                            <div className="flex items-start gap-2.5">
+                              <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+                                notif.type.includes('approved') || notif.type.includes('reunited')
+                                  ? 'bg-secondary text-on-secondary'
+                                  : notif.type.includes('rejected')
+                                  ? 'bg-error text-white'
+                                  : 'bg-primary text-secondary-fixed'
+                              }`}>
+                                <span className="material-symbols-outlined text-[18px]">
+                                  {notif.type.includes('approved') ? 'verified' : notif.type.includes('rejected') ? 'cancel' : 'notifications'}
+                                </span>
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className={`text-body-sm leading-tight truncate ${notif.read ? 'text-primary' : 'font-bold text-primary'}`}>
+                                  {notif.title}
+                                </p>
+                                <p className="text-label-sm text-on-surface-variant line-clamp-2 mt-0.5">
+                                  {notif.message}
+                                </p>
+                                <p className="text-[10px] text-outline mt-1">
+                                  {formatTimeAgo(notif.createdAt)}
+                                </p>
+                              </div>
+                              {!notif.read && (
+                                <span className="w-2 h-2 rounded-full bg-error shrink-0 mt-1.5" />
+                              )}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Auth Button or User Menu */}
             {isAuthenticated ? (
@@ -247,12 +482,24 @@ export default function Navbar() {
             <Link to="/" className="block py-2 text-body-md font-medium text-primary">
               Directory Feed
             </Link>
-            <Link to="/dashboard" className="block py-2 text-body-md font-medium text-primary">
-              My Registry Desk
+            <Link to="/dashboard" className="flex items-center justify-between py-2 text-body-md font-medium text-primary">
+              <span>My Registry Desk</span>
+              {isAuthenticated && unreadCount > 0 && (
+                <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-error text-white text-[10px] font-bold">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
             </Link>
             <Link to="/submit-item" className="block py-2 text-body-md font-medium text-secondary font-semibold">
               + Report Lost or Found Item
             </Link>
+            <a
+              href="tel:+918092982304"
+              className="flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-surface-container border border-outline-variant text-primary text-body-sm font-semibold hover:border-secondary transition-all"
+            >
+              <span className="material-symbols-outlined text-[18px] text-secondary">support_agent</span>
+              <span>Customer Care: +91 8092982304</span>
+            </a>
             {!isAuthenticated ? (
               <div className="pt-3 border-t border-outline-variant flex gap-2">
                 <Link to="/login" className="flex-1 text-center py-2 rounded-xl bg-primary text-on-primary font-semibold text-body-sm">

@@ -12,7 +12,7 @@ export default function ItemDetail() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { user, isAuthenticated } = useAuth()
-  const { socket } = useSocket() || {}
+  const { socket, onlineUsers } = useSocket() || {}
 
   // Primary Item State
   const [item, setItem] = useState(null)
@@ -134,7 +134,7 @@ export default function ItemDetail() {
 
   // Chat Setup & Initialization
   const initChatForTarget = useCallback(async (targetRecipientId) => {
-    if (!isAuthenticated || !item) return
+    if (!isAuthenticated || !item || !targetRecipientId) return null
     try {
       const { data } = await api.post('/api/chat/conversations', {
         itemId: item._id,
@@ -143,66 +143,103 @@ export default function ItemDetail() {
 
       if (data.success && data.conversation) {
         setConversation(data.conversation)
+        if (socket) {
+          const token = localStorage.getItem('findit_token')
+          socket.emit('join_conversation', data.conversation._id, token)
+        }
         const msgRes = await api.get(`/api/chat/conversations/${data.conversation._id}/messages`)
         if (msgRes.data.success) {
           setMessages(msgRes.data.messages || [])
         }
+        return data.conversation
       }
     } catch (err) {
-      console.error('Chat load error:', err)
+      console.warn('Chat load error:', err.response?.data?.message || err.message)
     }
-  }, [isAuthenticated, item])
+    return null
+  }, [isAuthenticated, item, socket])
 
-  useEffect(() => {
+  const loadChat = useCallback(async () => {
     if (!isAuthenticated || !item) return
+    try {
+      if (!canManage) {
+        // Normal user / claimant chats with the reporter
+        const target = item.reportedBy || item.reporterId
+        const repId = (typeof target === 'object' && target?._id)
+          ? target._id.toString()
+          : target?.toString()
+        if (repId && (!user?._id || user._id.toString() !== repId)) {
+          await initChatForTarget(repId)
+        }
+      } else {
+        // Reporter sees all threads for this case
+        const { data } = await api.get('/api/chat/conversations')
+        if (data.success && Array.isArray(data.conversations)) {
+          const itemConvos = data.conversations.filter(
+            (c) => (c.item?._id || c.item)?.toString() === item._id?.toString()
+          )
+          setConversationsList(itemConvos)
+          if (itemConvos.length > 0) {
+            const selectedConvo = activeChatRecipientId
+              ? itemConvos.find((c) =>
+                  c.participants.some((p) => (p._id || p)?.toString() === activeChatRecipientId?.toString())
+                ) || itemConvos[0]
+              : itemConvos[0]
 
-    const loadChat = async () => {
-      try {
-        if (!canManage) {
-          // Normal user chats with the reporter
-          const target = item.reportedBy || item.reporterId
-          const repId = typeof target === 'object' ? target?._id : target
-          if (repId) {
-            initChatForTarget(repId)
-          }
-        } else {
-          // Reporter sees all threads for this case
-          const { data } = await api.get('/api/chat/conversations')
-          if (data.success && Array.isArray(data.conversations)) {
-            const itemConvos = data.conversations.filter(
-              (c) => (c.item?._id || c.item) === item._id
-            )
-            setConversationsList(itemConvos)
-            if (itemConvos.length > 0) {
-              const selectedConvo = activeChatRecipientId
-                ? itemConvos.find((c) => c.participants.some((p) => (p._id || p) === activeChatRecipientId)) || itemConvos[0]
-                : itemConvos[0]
-
-              setConversation(selectedConvo)
-              const msgRes = await api.get(`/api/chat/conversations/${selectedConvo._id}/messages`)
-              if (msgRes.data.success) {
-                setMessages(msgRes.data.messages || [])
-              }
+            setConversation(selectedConvo)
+            if (socket) {
+              const token = localStorage.getItem('findit_token')
+              socket.emit('join_conversation', selectedConvo._id, token)
+            }
+            const msgRes = await api.get(`/api/chat/conversations/${selectedConvo._id}/messages`)
+            if (msgRes.data.success) {
+              setMessages(msgRes.data.messages || [])
+            }
+          } else if (claims && claims.length > 0) {
+            // No message thread yet, but claims exist -> connect with first claimant
+            const firstClaimant = claims[0].claimant
+            const claimantId = (firstClaimant?._id || firstClaimant)?.toString()
+            if (claimantId) {
+              await initChatForTarget(claimantId)
             }
           }
         }
-      } catch (err) {
-        console.error('Initial chat load failed:', err)
       }
+    } catch (err) {
+      console.error('Initial chat load failed:', err)
     }
+  }, [isAuthenticated, item, canManage, user, activeChatRecipientId, claims, initChatForTarget, socket])
 
+  useEffect(() => {
+    // eslint-disable-next-line react/set-state-in-effect
     loadChat()
-  }, [item, isAuthenticated, canManage, activeChatRecipientId, initChatForTarget])
+  }, [loadChat, chatOpen])
+
+  // Automatically mark conversation as read when viewing active chat
+  useEffect(() => {
+    if (chatOpen && conversation?._id && isAuthenticated) {
+      api.patch(`/api/chat/conversations/${conversation._id}/read`).catch(() => {})
+    }
+  }, [chatOpen, conversation?._id, isAuthenticated, messages.length])
 
   // Real-Time Socket Connection & Event Handling
   useEffect(() => {
-    if (!socket || !conversation?._id) return
+    if (!socket) return
 
-    socket.emit('join_conversation', conversation._id)
+    const token = localStorage.getItem('findit_token')
+    if (token) {
+      socket.emit('authenticate', token)
+    }
+
+    if (conversation?._id) {
+      socket.emit('join_conversation', conversation._id, token)
+    }
 
     const handleNewMessage = (msg) => {
-      const msgConvId = msg.conversationId || (msg.conversation?._id || msg.conversation)
-      if (msgConvId && conversation._id && msgConvId.toString() === conversation._id.toString()) {
+      const msgConvId = (msg.conversationId || msg.conversation?._id || msg.conversation)?.toString()
+      const currentConvId = conversation?._id?.toString()
+
+      if (msgConvId && currentConvId && msgConvId === currentConvId) {
         setMessages((prev) => {
           if (prev.some((m) => m._id === msg._id)) return prev
           return [...prev, msg]
@@ -224,9 +261,139 @@ export default function ItemDetail() {
     return () => {
       socket.off('new_message', handleNewMessage)
       socket.off('user_typing', handleTyping)
-      socket.emit('leave_conversation', conversation._id)
+      if (conversation?._id) {
+        socket.emit('leave_conversation', conversation._id)
+      }
     }
-  }, [socket, conversation])
+  }, [socket, conversation?._id])
+
+  // Real-Time Application Synchronization for Claims & Case Status
+  useEffect(() => {
+    if (!socket || !item?._id) return
+
+    const itemIdStr = item._id.toString()
+    socket.emit('join_case', itemIdStr)
+
+    const handleClaimSubmitted = (data) => {
+      if (data?.itemId && data.itemId.toString() === itemIdStr) {
+        if (data.claim) {
+          setClaims((prev) => {
+            if (prev.some((c) => c._id === data.claim._id)) return prev
+            return [data.claim, ...prev]
+          })
+        }
+        if (data.itemStatus) {
+          setItem((prev) => prev ? { ...prev, status: data.itemStatus } : prev)
+        }
+        if (canManage) {
+          toast.info(`New ownership claim submitted by ${data.claimant?.name || 'citizen'}!`)
+        }
+      }
+    }
+
+    const handleClaimStatusUpdated = (data) => {
+      if (data?.itemId && data.itemId.toString() === itemIdStr) {
+        setClaims((prev) =>
+          prev.map((c) =>
+            c._id === data.claimId
+              ? { ...c, status: data.status, decisionReason: data.reason, reviewedAt: new Date() }
+              : c
+          )
+        )
+        if (data.itemStatus) {
+          setItem((prev) => prev ? { ...prev, status: data.itemStatus } : prev)
+        }
+
+        const isMyClaim = claims.some(
+          (c) => c._id === data.claimId && (c.claimant?._id || c.claimant)?.toString() === user?._id?.toString()
+        )
+        if (isMyClaim) {
+          if (data.status === 'approved') {
+            toast.success('Your ownership claim has been approved! You can now coordinate handover.')
+          } else if (data.status === 'rejected') {
+            toast.error(`Your claim was rejected: ${data.reason || 'Insufficient proof provided.'}`)
+          }
+        }
+      }
+    }
+
+    const handleClaimInfoRequested = (data) => {
+      if (data?.itemId && data.itemId.toString() === itemIdStr) {
+        setClaims((prev) =>
+          prev.map((c) =>
+            c._id === data.claimId
+              ? { ...c, status: 'info_requested', infoRequestedMessage: data.message }
+              : c
+          )
+        )
+        const isMyClaim = claims.some(
+          (c) => c._id === data.claimId && (c.claimant?._id || c.claimant)?.toString() === user?._id?.toString()
+        )
+        if (isMyClaim) {
+          toast.warning(`The reporter requested more information: "${data.message}"`)
+        }
+      }
+    }
+
+    const handleClaimInfoResponded = (data) => {
+      if (data?.itemId && data.itemId.toString() === itemIdStr) {
+        setClaims((prev) =>
+          prev.map((c) =>
+            c._id === data.claimId
+              ? { ...c, status: 'pending', claimantResponse: data.claimantResponse }
+              : c
+          )
+        )
+        if (canManage) {
+          toast.info('Claimant provided additional verification details for review.')
+        }
+      }
+    }
+
+    const handleCaseStatusUpdated = (data) => {
+      if (data?.itemId && data.itemId.toString() === itemIdStr) {
+        if (data.item) {
+          setItem((prev) => (prev ? { ...prev, ...data.item } : prev))
+        } else if (data.status) {
+          setItem((prev) => (prev ? { ...prev, status: data.status } : prev))
+        }
+
+        if (data.status === 'Resolved') {
+          toast.success('Case status updated: Successfully Reunited!')
+        } else if (data.status === 'Closed') {
+          toast.info('This case has been formally closed and archived.')
+        } else if (data.status === 'Active') {
+          toast.info('Case status updated to Active.')
+        }
+      }
+    }
+
+    const handleItemUpdated = (data) => {
+      if (data?.item && data.item._id?.toString() === itemIdStr) {
+        setItem((prev) => (prev ? { ...prev, ...data.item } : prev))
+        toast.info('Case details updated.')
+      }
+    }
+
+    socket.on('claim_submitted', handleClaimSubmitted)
+    socket.on('claim_status_updated', handleClaimStatusUpdated)
+    socket.on('claim_info_requested', handleClaimInfoRequested)
+    socket.on('claim_info_responded', handleClaimInfoResponded)
+    socket.on('case_status_updated', handleCaseStatusUpdated)
+    socket.on('item_status_updated', handleCaseStatusUpdated)
+    socket.on('item_updated', handleItemUpdated)
+
+    return () => {
+      socket.emit('leave_case', itemIdStr)
+      socket.off('claim_submitted', handleClaimSubmitted)
+      socket.off('claim_status_updated', handleClaimStatusUpdated)
+      socket.off('claim_info_requested', handleClaimInfoRequested)
+      socket.off('claim_info_responded', handleClaimInfoResponded)
+      socket.off('case_status_updated', handleCaseStatusUpdated)
+      socket.off('item_status_updated', handleCaseStatusUpdated)
+      socket.off('item_updated', handleItemUpdated)
+    }
+  }, [socket, item?._id, canManage, user?._id, claims])
 
   // Scroll to Bottom of Chat
   useEffect(() => {
@@ -492,17 +659,66 @@ export default function ItemDetail() {
     }
   }
 
-  // Send Chat Message
+  // Send Chat Message with resilient auto-recovery & explicit error handling
   const handleSendMessage = async (e) => {
     e.preventDefault()
-    if (!msgText.trim() || !conversation) return
+    const textToSend = msgText.trim()
+    if (!textToSend || sending) return
+
+    if (!isAuthenticated) {
+      toast.error('Please sign in to send messages.')
+      navigate('/login')
+      return
+    }
 
     setSending(true)
-    const textToSend = msgText.trim()
-    setMsgText('')
 
     try {
-      const { data } = await api.post(`/api/chat/conversations/${conversation._id}/messages`, {
+      let activeConvo = conversation
+
+      // If active conversation is not loaded yet, resolve or create it dynamically
+      if (!activeConvo?._id) {
+        let recipientId = null
+        if (!canManage) {
+          // Claimant or citizen -> recipient is the reporter
+          const repObj = item.reportedBy || item.reporterId
+          recipientId = (typeof repObj === 'object' && repObj?._id) ? repObj._id.toString() : repObj?.toString()
+        } else {
+          // Reporter -> recipient is selected claimant or first claimant from claims
+          recipientId = activeChatRecipientId || claims[0]?.claimant?._id || claims[0]?.claimant
+        }
+
+        if (!recipientId) {
+          toast.info('No recipient available yet. When a citizen submits a claim or sends an inquiry, you can coordinate return here.')
+          setSending(false)
+          return
+        }
+
+        if (user?._id && user._id.toString() === recipientId.toString()) {
+          toast.error('Cannot send a message to yourself.')
+          setSending(false)
+          return
+        }
+
+        const { data: convoData } = await api.post('/api/chat/conversations', {
+          itemId: item._id,
+          recipientId
+        })
+
+        if (convoData.success && convoData.conversation) {
+          activeConvo = convoData.conversation
+          setConversation(convoData.conversation)
+          if (socket) {
+            const token = localStorage.getItem('findit_token')
+            socket.emit('join_conversation', convoData.conversation._id, token)
+          }
+        } else {
+          throw new Error(convoData.message || 'Could not establish conversation channel')
+        }
+      }
+
+      // Deliver message to MongoDB via authenticated API
+      const { data } = await api.post(`/api/chat/conversations/${activeConvo._id}/messages`, {
         text: textToSend
       })
 
@@ -511,10 +727,15 @@ export default function ItemDetail() {
           if (prev.some((m) => m._id === data.message._id)) return prev
           return [...prev, data.message]
         })
+        setMsgText('') // Only clear input on successful save!
+      } else {
+        throw new Error(data.message || 'Failed to deliver message')
       }
-    } catch {
-      toast.error('Could not send message. Please try again.')
-      setMsgText(textToSend)
+    } catch (err) {
+      console.error('Send message error:', err)
+      const errorMsg = err.response?.data?.message || err.message || 'Could not send message. Please try again.'
+      toast.error(errorMsg)
+      // msgText is preserved so the user's typed message is not lost!
     } finally {
       setSending(false)
     }
@@ -834,6 +1055,18 @@ export default function ItemDetail() {
                   </p>
                 </div>
               </div>
+
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-surface-container-lowest flex items-center justify-center text-secondary border border-outline-variant/60 shrink-0">
+                  <span className="material-symbols-outlined text-[20px]">support_agent</span>
+                </div>
+                <div>
+                  <span className="text-label-sm font-semibold text-outline uppercase block">Support &amp; Care</span>
+                  <a href="tel:+918092982304" className="text-body-md font-bold text-secondary hover:underline mt-0.5 block">
+                    +91 8092982304
+                  </a>
+                </div>
+              </div>
             </div>
 
             {/* Action Bar (Role & Status Sensitive) */}
@@ -860,15 +1093,27 @@ export default function ItemDetail() {
               {/* Chat with Reporter / Claimant */}
               <button
                 type="button"
-                onClick={() => setChatOpen((v) => !v)}
+                onClick={() => {
+                  setChatOpen((v) => {
+                    const next = !v
+                    if (next) {
+                      setTimeout(() => {
+                        document.getElementById('case-messenger')?.scrollIntoView({ behavior: 'smooth' })
+                      }, 100)
+                    }
+                    return next
+                  })
+                }}
                 className={`px-5 py-3 rounded-xl font-bold text-body-md transition-all shadow-sm flex items-center gap-2 cursor-pointer ${
                   chatOpen
                     ? 'bg-surface-container border border-outline-variant text-primary'
+                    : canManage
+                    ? 'bg-primary hover:bg-primary-container text-on-primary'
                     : 'bg-secondary hover:bg-on-secondary-container text-on-secondary'
                 }`}
               >
                 <span className="material-symbols-outlined text-[20px]">chat</span>
-                <span>{chatOpen ? 'Hide Case Messenger' : (canManage ? 'Open Case Messenger' : 'Chat with Reporter')}</span>
+                <span>{chatOpen ? 'Hide Case Messenger' : (canManage ? 'Open Case Messenger' : 'Contact Reporter')}</span>
               </button>
 
               {/* Reporter Action: Edit Case Details */}
@@ -1277,134 +1522,253 @@ export default function ItemDetail() {
       </section>
 
       {/* ── SECTION E: REAL-TIME MESSENGER ─────────────────────────────────── */}
-      {chatOpen && (
-        <section className="bg-surface-container-lowest rounded-3xl border border-outline-variant shadow-lg overflow-hidden animate-in fade-in duration-200">
-          {/* Chat Header */}
-          <div className="px-6 py-4 bg-primary text-on-primary flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-secondary text-on-secondary flex items-center justify-center">
-                <span className="material-symbols-outlined text-[20px]">chat</span>
-              </div>
-              <div>
-                <h3 className="text-body-md font-bold leading-tight">
-                  Direct Case Coordination Channel
-                </h3>
-                <p className="text-label-sm text-surface-container-high">
-                  Case #{caseId} &bull; Safe, in-app messaging
-                </p>
-              </div>
-            </div>
+      {chatOpen && (() => {
+        const counterpart = (() => {
+          if (conversation?.participants) {
+            const found = conversation.participants.find((p) => (p._id || p)?.toString() !== user?._id?.toString())
+            if (found) return found
+          }
+          if (!canManage) {
+            return item?.reportedBy || item?.reporterId || { name: 'Item Reporter' }
+          }
+          return claims[0]?.claimant || { name: 'Claimant' }
+        })()
+        const counterpartId = (counterpart?._id || counterpart)?.toString()
+        const isCounterpartOnline = Boolean(counterpartId && onlineUsers?.has(counterpartId))
+        const counterpartInitial = counterpart.name ? counterpart.name.charAt(0).toUpperCase() : 'C'
 
-            <button
-              type="button"
-              onClick={() => setChatOpen(false)}
-              className="p-1 rounded-lg hover:bg-primary-container text-surface-container-high hover:text-white transition-colors"
-              aria-label="Close chat"
-            >
-              <span className="material-symbols-outlined text-[20px]">close</span>
-            </button>
-          </div>
+        const quickPrompts = canManage
+          ? [
+              'Hello, thanks for reaching out. What details can you share about the item?',
+              'Can you describe any unique markings or serial numbers?',
+              'Where would you like to arrange safe public handover?'
+            ]
+          : [
+              'Hello, is this item still available?',
+              'Where specifically was this item discovered?',
+              'I have proof of purchase and serial numbers for this item.',
+              'When would be a good time to meet for safe handover?'
+            ]
 
-          {/* If reporter has multiple claimants, allow switching tabs */}
-          {canManage && conversationsList.length > 1 && (
-            <div className="px-4 py-2 bg-surface-container-low border-b border-outline-variant flex gap-2 overflow-x-auto">
-              <span className="text-label-sm font-semibold text-outline self-center shrink-0">Claimants:</span>
-              {conversationsList.map((convo) => {
-                const other = convo.participants.find((p) => (p._id || p) !== user?._id)
-                const isSelected = conversation?._id === convo._id
-                return (
-                  <button
-                    key={convo._id}
-                    type="button"
-                    onClick={() => {
-                      setConversation(convo)
-                      api.get(`/api/chat/conversations/${convo._id}/messages`).then(({ data }) => {
-                        if (data.success) setMessages(data.messages || [])
-                      })
-                    }}
-                    className={`px-3 py-1 rounded-lg text-label-sm font-semibold transition-all shrink-0 ${
-                      isSelected
-                        ? 'bg-primary text-on-primary'
-                        : 'bg-surface-container hover:bg-surface-container-high text-primary'
-                    }`}
-                  >
-                    {other?.name || 'Claimant Thread'}
-                  </button>
-                )
-              })}
-            </div>
-          )}
+        const formatMessageDateHeader = (dateStr) => {
+          if (!dateStr) return 'Today'
+          const d = new Date(dateStr)
+          const today = new Date()
+          if (d.toDateString() === today.toDateString()) return 'Today'
+          const y = new Date()
+          y.setDate(y.getDate() - 1)
+          if (d.toDateString() === y.toDateString()) return 'Yesterday'
+          return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+        }
 
-          {/* Messages Feed */}
-          <div className="p-6 h-80 overflow-y-auto space-y-3 bg-surface-container-low custom-scrollbar">
-            {messages.length === 0 ? (
-              <div className="text-center py-16 text-on-surface-variant space-y-2">
-                <span className="material-symbols-outlined text-[36px] text-outline block">chat_bubble_outline</span>
-                <p className="text-body-md font-medium text-primary">No messages in this case channel yet.</p>
-                <p className="text-body-sm text-outline max-w-sm mx-auto">
-                  Coordinate questions, verification details, or safe public pickup locations here.
-                </p>
-              </div>
-            ) : (
-              messages.map((m) => {
-                const isMe = (m.sender?._id || m.sender) === user?._id
-                return (
-                  <div
-                    key={m._id}
-                    className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}
-                  >
-                    <div className="flex items-end gap-2 max-w-[85%] sm:max-w-[70%]">
-                      {!isMe && (
-                        <div className="w-7 h-7 rounded-full bg-primary text-secondary-fixed flex items-center justify-center text-label-sm font-bold shrink-0 mb-1">
-                          {m.sender?.name ? m.sender.name.charAt(0).toUpperCase() : 'U'}
-                        </div>
-                      )}
-                      <div
-                        className={`rounded-2xl px-4 py-2.5 text-body-sm leading-relaxed ${
-                          isMe
-                            ? 'bg-primary text-on-primary rounded-br-none shadow-xs'
-                            : 'bg-surface-container-lowest text-primary border border-outline-variant rounded-bl-none shadow-xs'
-                        }`}
-                      >
-                        <p className="whitespace-pre-line">{m.text}</p>
-                      </div>
+        return (
+          <section id="case-messenger" className="bg-surface-container-lowest rounded-3xl border border-outline-variant shadow-lg overflow-hidden animate-in fade-in duration-200">
+            {/* Chat Header */}
+            <div className="px-6 py-4 bg-primary text-on-primary flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-3.5">
+                {/* Item thumbnail */}
+                <div className="w-12 h-12 rounded-xl bg-surface-container overflow-hidden border border-white/20 shrink-0">
+                  {item.imageUrl ? (
+                    <img src={item.imageUrl} alt={item.title} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-primary bg-surface">
+                      <span className="material-symbols-outlined text-[20px]">inventory_2</span>
                     </div>
-                    <span className="text-[10px] text-outline mt-1 px-1">
-                      {new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  )}
+                </div>
+
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-body-md font-bold leading-tight truncate max-w-xs sm:max-w-md">
+                      {item.title}
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-full bg-white/10 text-white text-[11px] font-mono">
+                      #{caseId}
                     </span>
                   </div>
-                )
-              })
+
+                  {/* Counterpart info & online presence */}
+                  <div className="flex flex-wrap items-center gap-2 mt-1 text-label-sm text-surface-container-high">
+                    <span className="flex items-center gap-1.5 font-medium">
+                      <span className={`w-2 h-2 rounded-full ${isCounterpartOnline ? 'bg-secondary animate-pulse' : 'bg-outline-variant'}`} />
+                      <span>{counterpart.name || 'Participant'}</span>
+                      <span className="text-[11px] opacity-80">({isCounterpartOnline ? 'Active Now' : 'Offline'})</span>
+                    </span>
+                    {conversation?.claim && (
+                      <>
+                        <span>&bull;</span>
+                        <span className="px-2 py-0.5 rounded-md bg-secondary text-on-secondary text-[10px] font-bold uppercase">
+                          Claim: {conversation.claim.status || 'Active'}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setChatOpen(false)}
+                className="p-1.5 rounded-xl hover:bg-primary-container text-surface-container-high hover:text-white transition-colors"
+                aria-label="Close case messenger"
+              >
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
+            </div>
+
+            {/* If reporter has multiple claimants, allow switching tabs */}
+            {canManage && conversationsList.length > 1 && (
+              <div className="px-4 py-2 bg-surface-container-low border-b border-outline-variant flex gap-2 overflow-x-auto">
+                <span className="text-label-sm font-semibold text-outline self-center shrink-0">Claimants:</span>
+                {conversationsList.map((convo) => {
+                  const other = convo.participants.find((p) => (p._id || p)?.toString() !== user?._id?.toString())
+                  const isSelected = conversation?._id === convo._id
+                  const hasUnread = (convo.computedUnreadCount || 0) > 0
+
+                  return (
+                    <button
+                      key={convo._id}
+                      type="button"
+                      onClick={() => {
+                        setConversation(convo)
+                        api.get(`/api/chat/conversations/${convo._id}/messages`).then(({ data }) => {
+                          if (data.success) setMessages(data.messages || [])
+                        })
+                      }}
+                      className={`px-3 py-1 rounded-lg text-label-sm font-semibold transition-all shrink-0 flex items-center gap-1.5 ${
+                        isSelected
+                          ? 'bg-primary text-on-primary'
+                          : 'bg-surface-container hover:bg-surface-container-high text-primary'
+                      }`}
+                    >
+                      <span>{other?.name || 'Claimant Thread'}</span>
+                      {hasUnread && (
+                        <span className="w-2 h-2 rounded-full bg-error" />
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
             )}
 
-            {typingUser && (
-              <p className="text-label-sm font-semibold text-secondary animate-pulse">
-                {typingUser} is typing...
-              </p>
-            )}
-            <div ref={messagesEndRef} />
-          </div>
+            {/* Messages Feed */}
+            <div className="p-6 h-96 overflow-y-auto space-y-3 bg-surface-container-low custom-scrollbar">
+              {messages.length === 0 ? (
+                <div className="text-center py-12 text-on-surface-variant space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-surface-container flex items-center justify-center text-primary mx-auto">
+                    <span className="material-symbols-outlined text-[28px] text-outline">chat_bubble_outline</span>
+                  </div>
+                  <p className="text-body-md font-bold text-primary">No messages in this case channel yet.</p>
+                  <p className="text-body-sm text-outline max-w-sm mx-auto">
+                    Ask questions, verify lost details, or arrange safe public handover in a verified civic precinct.
+                  </p>
 
-          {/* Chat Input */}
-          <form onSubmit={handleSendMessage} className="p-4 bg-surface-container-lowest border-t border-outline-variant flex gap-2">
-            <input
-              type="text"
-              value={msgText}
-              onChange={handleMsgInputChange}
-              placeholder="Write a message to coordinate safe return..."
-              className="flex-1 px-4 py-2.5 text-body-md bg-surface rounded-xl border border-outline-variant focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-            <button
-              type="submit"
-              disabled={sending || !msgText.trim()}
-              className="px-5 py-2.5 bg-primary hover:bg-primary-container disabled:opacity-50 text-on-primary rounded-xl font-bold text-body-md flex items-center gap-1.5 transition-colors shadow-2xs"
-            >
-              <span>Send</span>
-              <span className="material-symbols-outlined text-[18px]">send</span>
-            </button>
-          </form>
-        </section>
-      )}
+                  {/* Quick Prompt Chips */}
+                  <div className="flex flex-wrap gap-2 justify-center pt-2 max-w-md mx-auto">
+                    {quickPrompts.map((promptText, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          setMsgText(promptText)
+                          document.getElementById('case-msg-input')?.focus()
+                        }}
+                        className="px-3 py-1.5 rounded-full bg-surface-container border border-outline-variant hover:border-primary text-primary text-[12px] font-medium transition-all"
+                      >
+                        &ldquo;{promptText}&rdquo;
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                messages.map((m, idx) => {
+                  const isMe = (m.sender?._id || m.sender)?.toString() === user?._id?.toString()
+                  const currentDateLabel = formatMessageDateHeader(m.createdAt)
+                  const prevDateLabel = idx > 0 ? formatMessageDateHeader(messages[idx - 1].createdAt) : null
+                  const showDateSeparator = currentDateLabel !== prevDateLabel
+
+                  return (
+                    <div key={m._id || idx} className="space-y-2">
+                      {showDateSeparator && (
+                        <div className="flex items-center my-3">
+                          <div className="flex-1 border-t border-outline-variant/60" />
+                          <span className="px-3 text-[10px] font-bold text-outline uppercase tracking-wider bg-surface-container-low">
+                            {currentDateLabel}
+                          </span>
+                          <div className="flex-1 border-t border-outline-variant/60" />
+                        </div>
+                      )}
+
+                      <div className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                        <div className="flex items-end gap-2 max-w-[85%] sm:max-w-[70%]">
+                          {!isMe && (
+                            <div className="w-7 h-7 rounded-full bg-primary text-secondary-fixed flex items-center justify-center text-label-sm font-bold shrink-0 mb-1">
+                              {m.sender?.name ? m.sender.name.charAt(0).toUpperCase() : counterpartInitial}
+                            </div>
+                          )}
+                          <div
+                            className={`rounded-2xl px-4 py-2.5 text-body-sm leading-relaxed ${
+                              isMe
+                                ? 'bg-primary text-on-primary rounded-br-none shadow-xs'
+                                : 'bg-surface-container-lowest text-primary border border-outline-variant rounded-bl-none shadow-xs'
+                            }`}
+                          >
+                            <p className="whitespace-pre-line">{m.text}</p>
+                          </div>
+                        </div>
+                        <span className="text-[10px] text-outline mt-1 px-1">
+                          {new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+
+              {typingUser && (
+                <p className="text-label-sm font-semibold text-secondary animate-pulse">
+                  {typingUser} is typing...
+                </p>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* Chat Input */}
+            <form onSubmit={handleSendMessage} className="p-4 bg-surface-container-lowest border-t border-outline-variant flex items-end gap-2">
+              <div className="flex-1 relative">
+                <textarea
+                  id="case-msg-input"
+                  rows={2}
+                  value={msgText}
+                  onChange={handleMsgInputChange}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      handleSendMessage(e)
+                    }
+                  }}
+                  placeholder="Write a message to coordinate safe return... (Enter to send, Shift+Enter for new line)"
+                  className="w-full px-4 py-2.5 text-body-sm bg-surface rounded-xl border border-outline-variant focus:outline-none focus:ring-2 focus:ring-primary resize-none placeholder:text-outline"
+                  maxLength={2000}
+                />
+                {msgText.length > 500 && (
+                  <span className="absolute bottom-2 right-2 text-[10px] text-outline font-mono">
+                    {msgText.length}/2000
+                  </span>
+                )}
+              </div>
+              <button
+                type="submit"
+                disabled={sending || !msgText.trim()}
+                className="px-5 py-3 bg-primary hover:bg-primary-container disabled:opacity-50 text-on-primary rounded-xl font-bold text-body-md flex items-center gap-1.5 transition-colors shadow-2xs cursor-pointer shrink-0"
+              >
+                <span>{sending ? 'Sending...' : 'Send'}</span>
+                <span className="material-symbols-outlined text-[18px]">send</span>
+              </button>
+            </form>
+          </section>
+        )
+      })()}
 
       {/* ── SECTION G: TECHNICAL VERIFICATION DISCLOSURE (COLLAPSIBLE) ────── */}
       <section className="bg-surface-container-low rounded-2xl border border-outline-variant/60 overflow-hidden">

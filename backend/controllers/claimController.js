@@ -1,6 +1,8 @@
 const mongoose = require('mongoose');
 const Claim = require('../models/Claim');
 const Item = require('../models/Item');
+const Conversation = require('../models/Conversation');
+const { createAndSendNotification } = require('../services/notificationService');
 const cloudinary = require('cloudinary').v2;
 const streamifier = require('streamifier');
 
@@ -103,9 +105,88 @@ exports.submitClaim = async (req, res) => {
     });
     await item.save();
 
+    // Auto-link or create case conversation with claim
+    try {
+      let conversation = await Conversation.findOne({
+        item: itemId,
+        participants: { $all: [req.user._id, itemAuthorId], $size: 2 }
+      });
+
+      if (!conversation) {
+        conversation = await Conversation.create({
+          item: itemId,
+          participants: [req.user._id, itemAuthorId],
+          claim: claim._id,
+          conversationType: 'claim_coordination',
+          lastMessage: `Claim submitted by ${req.user.name || 'claimant'}.`,
+          lastMessageAt: new Date()
+        });
+      } else {
+        conversation.claim = claim._id;
+        conversation.conversationType = 'claim_coordination';
+        await conversation.save();
+      }
+
+      if (req.io && itemAuthorId) {
+        req.io.to(`user_${itemAuthorId}`).emit('new_claim_notification', {
+          claimId: claim._id,
+          itemId,
+          itemTitle: item.title,
+          claimantName: req.user.name,
+          createdAt: claim.createdAt
+        });
+      }
+    } catch (convErr) {
+      console.warn('Auto conversation link warning:', convErr.message);
+    }
+
     const populatedClaim = await Claim.findById(claim._id)
       .populate('claimant', 'name email avatar')
       .populate('item', 'title category itemType type imageUrl status');
+
+    if (req.io) {
+      const claimPayload = {
+        claim: populatedClaim,
+        itemId: item._id.toString(),
+        itemStatus: item.status,
+        claimant: {
+          _id: req.user._id,
+          name: req.user.name,
+          email: req.user.email,
+          avatar: req.user.avatar
+        }
+      };
+
+      // Real-time synchronization to reporter and case viewer
+      if (itemAuthorId) {
+        req.io.to(`user_${itemAuthorId}`).emit('claim_submitted', claimPayload);
+      }
+      req.io.to(`case_${item._id}`).emit('claim_submitted', claimPayload);
+
+      // Real-time item status update
+      req.io.to(`case_${item._id}`).emit('item_status_updated', {
+        itemId: item._id.toString(),
+        status: item.status
+      });
+      req.io.emit('item_status_updated', {
+        itemId: item._id.toString(),
+        status: item.status
+      });
+
+      // Persistent Notification in MongoDB for reporter
+      if (itemAuthorId) {
+        await createAndSendNotification(req.io, {
+          recipient: itemAuthorId,
+          sender: req.user._id,
+          type: 'claim_submitted',
+          title: 'New Ownership Claim Submitted',
+          message: `${req.user.name || 'A citizen'} submitted an ownership claim for "${item.title}".`,
+          item: item._id,
+          claim: claim._id,
+          link: `/item/${item._id}?action=claims`
+        });
+      }
+    }
 
     res.status(201).json({
       success: true,
@@ -261,6 +342,13 @@ exports.resolveClaim = async (req, res) => {
       });
       await item.save();
 
+      // Find other pending claimants to notify them in real time
+      const otherClaims = await Claim.find({
+        item: item._id,
+        _id: { $ne: claim._id },
+        status: { $in: ['pending', 'info_requested'] }
+      }).select('claimant _id');
+
       // Automatically reject any other pending or info-requested claims for this item
       await Claim.updateMany(
         { item: item._id, _id: { $ne: claim._id }, status: { $in: ['pending', 'info_requested'] } },
@@ -271,6 +359,32 @@ exports.resolveClaim = async (req, res) => {
           reviewedAt: new Date()
         }
       );
+
+      // Notify other claimants in real time
+      if (req.io && otherClaims.length > 0) {
+        for (const oc of otherClaims) {
+          const ocId = (oc.claimant?._id || oc.claimant)?.toString();
+          if (ocId) {
+            req.io.to(`user_${ocId}`).emit('claim_status_updated', {
+              claimId: oc._id,
+              itemId: item._id,
+              status: 'rejected',
+              reason: 'Another verified claim was approved for this item.',
+              itemStatus: item.status
+            });
+            await createAndSendNotification(req.io, {
+              recipient: ocId,
+              sender: req.user._id,
+              type: 'claim_rejected',
+              title: 'Claim Update: Case Concluded',
+              message: `Another verified claim was approved for "${item.title}". Your claim was concluded.`,
+              item: item._id,
+              claim: oc._id,
+              link: `/item/${item._id}`
+            });
+          }
+        }
+      }
     } else if (claim.status === 'rejected') {
       // If no other pending/approved claims exist, restore item status to Active if it was Pending Claim
       const activePending = await Claim.countDocuments({
@@ -292,6 +406,50 @@ exports.resolveClaim = async (req, res) => {
     const updatedClaim = await Claim.findById(claimId)
       .populate('claimant', 'name email avatar')
       .populate('item', 'title status');
+
+    if (req.io) {
+      const claimantId = (claim.claimant._id || claim.claimant)?.toString();
+      const payload = {
+        claimId: claim._id,
+        itemId: item._id,
+        status: claim.status,
+        reason: claim.decisionReason,
+        itemStatus: item.status,
+        claim: updatedClaim
+      };
+
+      if (claimantId) {
+        req.io.to(`user_${claimantId}`).emit('claim_status_updated', payload);
+      }
+      req.io.to(`case_${item._id}`).emit('claim_status_updated', payload);
+
+      // Broadcast item status update
+      req.io.to(`case_${item._id}`).emit('item_status_updated', {
+        itemId: item._id.toString(),
+        status: item.status
+      });
+      req.io.emit('item_status_updated', {
+        itemId: item._id.toString(),
+        status: item.status
+      });
+
+      // Persistent Notification in MongoDB for claimant
+      if (claimantId) {
+        const isApproved = claim.status === 'approved';
+        await createAndSendNotification(req.io, {
+          recipient: claimantId,
+          sender: req.user._id,
+          type: isApproved ? 'claim_approved' : 'claim_rejected',
+          title: isApproved ? 'Ownership Claim Approved! 🎉' : 'Claim Verification Decision',
+          message: isApproved
+            ? `Your ownership claim for "${item.title}" has been approved! You can now coordinate the safe handover with the reporter.`
+            : `Your claim for "${item.title}" was rejected: ${claim.decisionReason || 'Insufficient proof provided.'}`,
+          item: item._id,
+          claim: claim._id,
+          link: `/item/${item._id}?action=claim`
+        });
+      }
+    }
 
     res.status(200).json({
       success: true,
@@ -342,6 +500,30 @@ exports.requestClaimInfo = async (req, res) => {
     claim.reviewedAt = new Date();
     await claim.save();
 
+    if (req.io && claim.claimant) {
+      const claimantId = (claim.claimant._id || claim.claimant).toString();
+      const payload = {
+        claimId: claim._id,
+        itemId: item._id,
+        message: message.trim(),
+        claim
+      };
+
+      req.io.to(`user_${claimantId}`).emit('claim_info_requested', payload);
+      req.io.to(`case_${item._id}`).emit('claim_info_requested', payload);
+
+      await createAndSendNotification(req.io, {
+        recipient: claimantId,
+        sender: req.user._id,
+        type: 'claim_info_requested',
+        title: 'Additional Information Requested',
+        message: `Reporter requested additional proof for "${item.title}": ${message.trim()}`,
+        item: item._id,
+        claim: claim._id,
+        link: `/item/${item._id}`
+      });
+    }
+
     res.status(200).json({
       success: true,
       message: 'Request for additional verification information sent to claimant.',
@@ -379,10 +561,46 @@ exports.respondToClaimInfo = async (req, res) => {
     claim.status = 'pending';
     await claim.save();
 
+    const populatedClaim = await Claim.findById(claimId)
+      .populate('claimant', 'name email avatar')
+      .populate('item', 'title status');
+
+    const item = await Item.findById(claim.item._id || claim.item);
+    const reporterId = (item?.reportedBy || item?.reporterId)?.toString();
+
+    if (req.io) {
+      const payload = {
+        claimId: claim._id,
+        itemId: item ? item._id : null,
+        claimantResponse: response.trim(),
+        claim: populatedClaim
+      };
+
+      if (reporterId) {
+        req.io.to(`user_${reporterId}`).emit('claim_info_responded', payload);
+      }
+      if (item?._id) {
+        req.io.to(`case_${item._id}`).emit('claim_info_responded', payload);
+      }
+
+      if (reporterId && item) {
+        await createAndSendNotification(req.io, {
+          recipient: reporterId,
+          sender: req.user._id,
+          type: 'claim_info_responded',
+          title: 'Claimant Provided Additional Info',
+          message: `${req.user.name || 'Claimant'} responded to your proof request for "${item.title}".`,
+          item: item._id,
+          claim: claim._id,
+          link: `/item/${item._id}?action=claims`
+        });
+      }
+    }
+
     res.status(200).json({
       success: true,
       message: 'Additional verification details submitted for review.',
-      claim
+      claim: populatedClaim
     });
   } catch (error) {
     console.error('Error responding to claim info:', error);

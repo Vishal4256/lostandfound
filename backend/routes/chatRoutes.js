@@ -5,8 +5,10 @@ const chatController = require('../controllers/chatController');
 
 router.use(protect);
 
+router.get('/unread-count', chatController.getUnreadCount);
 router.get('/conversations', chatController.getUserConversations);
 router.post('/conversations', chatController.getOrCreateConversation);
+router.patch('/conversations/:id/read', chatController.markConversationAsRead);
 router.get('/conversations/:id/messages', chatController.getMessages);
 router.post('/conversations/:id/messages', chatController.sendMessage);
 

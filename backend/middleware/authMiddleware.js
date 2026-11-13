@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'lostandfound_super_secret_key_change_in_prod';
+const JWT_SECRET = process.env.JWT_SECRET;
 
 /**
  * Protect middleware: Verifies JWT from Bearer header or cookie

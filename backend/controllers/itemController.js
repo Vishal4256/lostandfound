@@ -5,11 +5,12 @@ const Item = require('../models/Item');
 const User = require('../models/User');
 const Claim = require('../models/Claim');
 const Conversation = require('../models/Conversation');
+const { createAndSendNotification } = require('../services/notificationService');
 const { generateImageEmbedding } = require('../services/embeddingService');
 const cloudinary = require('cloudinary').v2;
 const streamifier = require('streamifier');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'lostandfound_super_secret_key_change_in_prod';
+const JWT_SECRET = process.env.JWT_SECRET;
 
 // Configure Cloudinary
 cloudinary.config({
@@ -210,6 +211,12 @@ exports.createListing = async (req, res) => {
         .map(({ embedding, score, ...rest }) => rest);
     } catch (matchErr) {
       console.warn('Pre-match correlation error:', matchErr.message);
+    }
+
+    if (req.io) {
+      req.io.emit('new_item_reported', {
+        item: populatedItem
+      });
     }
 
     res.status(201).json({
@@ -826,6 +833,22 @@ exports.updateItemStatus = async (req, res) => {
     item.status = normalizedStatus;
     await item.save();
 
+    if (req.io) {
+      req.io.to(`case_${item._id}`).emit('item_status_updated', {
+        itemId: item._id.toString(),
+        status: item.status
+      });
+      req.io.to(`case_${item._id}`).emit('case_status_updated', {
+        itemId: item._id.toString(),
+        status: item.status,
+        item
+      });
+      req.io.emit('item_status_updated', {
+        itemId: item._id.toString(),
+        status: item.status
+      });
+    }
+
     res.status(200).json({
       success: true,
       message: `Item status updated to ${item.status}`,
@@ -948,6 +971,17 @@ exports.updateItemDetails = async (req, res) => {
 
     await item.save();
 
+    const populated = await Item.findById(id).populate('reportedBy', 'name email avatar');
+
+    if (req.io) {
+      req.io.to(`case_${item._id}`).emit('item_updated', {
+        item: populated
+      });
+      req.io.emit('item_updated', {
+        item: populated
+      });
+    }
+
     res.status(200).json({
       success: true,
       message: 'Case details updated successfully.',
@@ -1014,6 +1048,42 @@ exports.confirmHandover = async (req, res) => {
       .populate('reportedBy', 'name email avatar')
       .populate('handover.completedBy', 'name email avatar');
 
+    if (req.io) {
+      req.io.to(`case_${id}`).emit('case_status_updated', {
+        itemId: id.toString(),
+        status: 'Resolved',
+        item: populatedItem
+      });
+      req.io.to(`case_${id}`).emit('item_status_updated', {
+        itemId: id.toString(),
+        status: 'Resolved'
+      });
+      req.io.emit('item_status_updated', {
+        itemId: id.toString(),
+        status: 'Resolved'
+      });
+
+      const approvedClaim = await Claim.findOne({ item: id, status: 'approved' });
+      if (approvedClaim && approvedClaim.claimant) {
+        const claimantId = (approvedClaim.claimant._id || approvedClaim.claimant).toString();
+        req.io.to(`user_${claimantId}`).emit('case_status_updated', {
+          itemId: id.toString(),
+          status: 'Resolved',
+          item: populatedItem
+        });
+        await createAndSendNotification(req.io, {
+          recipient: claimantId,
+          sender: req.user._id,
+          type: 'item_reunited',
+          title: 'Handover Completed! 🎉',
+          message: `The handover for "${item.title}" was recorded and marked as successfully reunited.`,
+          item: id,
+          claim: approvedClaim._id,
+          link: `/item/${id}`
+        });
+      }
+    }
+
     res.status(200).json({
       success: true,
       message: 'Handover recorded! Case marked as Successfully Reunited.',
@@ -1068,6 +1138,37 @@ exports.closeCase = async (req, res) => {
 
     await item.save();
 
+    if (req.io) {
+      req.io.to(`case_${id}`).emit('case_status_updated', {
+        itemId: id.toString(),
+        status: 'Closed',
+        item
+      });
+      req.io.to(`case_${id}`).emit('item_status_updated', {
+        itemId: id.toString(),
+        status: 'Closed'
+      });
+      req.io.emit('item_status_updated', {
+        itemId: id.toString(),
+        status: 'Closed'
+      });
+
+      const approvedClaim = await Claim.findOne({ item: id, status: 'approved' });
+      if (approvedClaim && approvedClaim.claimant) {
+        const claimantId = (approvedClaim.claimant._id || approvedClaim.claimant).toString();
+        await createAndSendNotification(req.io, {
+          recipient: claimantId,
+          sender: req.user._id,
+          type: 'case_closed',
+          title: 'Case Concluded & Archived',
+          message: `The case for "${item.title}" has been closed.`,
+          item: id,
+          claim: approvedClaim._id,
+          link: `/item/${id}`
+        });
+      }
+    }
+
     res.status(200).json({
       success: true,
       message: 'Case successfully closed.',
@@ -1114,6 +1215,22 @@ exports.reopenCase = async (req, res) => {
     });
 
     await item.save();
+
+    if (req.io) {
+      req.io.to(`case_${id}`).emit('case_status_updated', {
+        itemId: id.toString(),
+        status: 'Active',
+        item
+      });
+      req.io.to(`case_${id}`).emit('item_status_updated', {
+        itemId: id.toString(),
+        status: 'Active'
+      });
+      req.io.emit('item_status_updated', {
+        itemId: id.toString(),
+        status: 'Active'
+      });
+    }
 
     res.status(200).json({
       success: true,

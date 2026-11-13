@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import api from '../services/api'
+import { useSocket } from '../context/SocketContext'
 import ItemCard from '../components/common/ItemCard'
 import EmptyState from '../components/common/EmptyState'
 import VisualSearchModal from '../components/VisualSearchModal'
@@ -19,6 +20,7 @@ const CATEGORIES = [
 ]
 
 export default function Home() {
+  const { socket } = useSocket() || {}
   const [searchParams, setSearchParams] = useSearchParams()
   const [searchModal, setSearchModal] = useState(false)
   const [searchResults, setSearchResults] = useState(null)
@@ -26,6 +28,44 @@ export default function Home() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [stats, setStats] = useState({ total: 0, active: 0, inCustody: 0, resolved: 0 })
+
+  // Real-time synchronization for Directory Feed
+  useEffect(() => {
+    if (!socket) return
+
+    const handleItemStatusUpdated = (data) => {
+      if (data?.itemId) {
+        setListings((prev) =>
+          prev.map((item) =>
+            item._id === data.itemId ? { ...item, status: data.status } : item
+          )
+        )
+      }
+      api.get('/api/items/stats').then(({ data: statsData }) => {
+        if (statsData.success && statsData.stats) setStats(statsData.stats)
+      }).catch(() => {})
+    }
+
+    const handleNewItemReported = (data) => {
+      if (data?.item) {
+        setListings((prev) => {
+          if (prev.some((i) => i._id === data.item._id)) return prev
+          return [data.item, ...prev]
+        })
+      }
+      api.get('/api/items/stats').then(({ data: statsData }) => {
+        if (statsData.success && statsData.stats) setStats(statsData.stats)
+      }).catch(() => {})
+    }
+
+    socket.on('item_status_updated', handleItemStatusUpdated)
+    socket.on('new_item_reported', handleNewItemReported)
+
+    return () => {
+      socket.off('item_status_updated', handleItemStatusUpdated)
+      socket.off('new_item_reported', handleNewItemReported)
+    }
+  }, [socket])
 
   // Fetch real database statistics
   useEffect(() => {
@@ -703,10 +743,11 @@ export default function Home() {
               </div>
             </div>
             <a
-              href="tel:18005550192"
-              className="shrink-0 px-6 py-3 rounded-xl bg-secondary hover:bg-on-secondary-container text-on-secondary font-semibold text-body-md transition-all active:scale-[0.98] shadow-xs"
+              href="tel:+918092982304"
+              className="shrink-0 px-6 py-3 rounded-xl bg-secondary hover:bg-on-secondary-container text-on-secondary font-semibold text-body-md transition-all active:scale-[0.98] shadow-xs flex items-center gap-2"
             >
-              Call Civic Dispatch (24/7)
+              <span className="material-symbols-outlined text-[20px]">call</span>
+              <span>Customer Care: +91 8092982304</span>
             </a>
           </div>
         </div>

@@ -3,18 +3,22 @@ import { Link } from 'react-router-dom'
 import api from '../services/api'
 import { toast } from 'sonner'
 import { useAuth } from '../context/AuthContext'
+import { useSocket } from '../context/SocketContext'
 import StatCard from '../components/common/StatCard'
 import StatusBadge from '../components/common/StatusBadge'
 import EmptyState from '../components/common/EmptyState'
-import { formatLocation } from '../utils/formatters'
+import { formatLocation, formatTimeAgo } from '../utils/formatters'
 
 export default function Dashboard() {
   const { user } = useAuth()
+  const { socket } = useSocket() || {}
   const [activeTab, setActiveTab] = useState('reports')
   const [reports, setReports] = useState([])
   const [claims, setClaims] = useState([])
   const [conversations, setConversations] = useState([])
   const [loading, setLoading] = useState(true)
+  const [chatSearch, setChatSearch] = useState('')
+  const [unreadOnly, setUnreadOnly] = useState(false)
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -47,6 +51,101 @@ export default function Dashboard() {
     // eslint-disable-next-line react/set-state-in-effect
     fetchData()
   }, [fetchData])
+
+  // Real-time synchronization on Dashboard
+  useEffect(() => {
+    if (!socket) return
+
+    const handleClaimSubmitted = () => {
+      fetchData()
+    }
+
+    const handleClaimStatusUpdated = (data) => {
+      if (data?.claimId) {
+        setClaims((prev) =>
+          prev.map((c) =>
+            c._id === data.claimId
+              ? { ...c, status: data.status, decisionReason: data.reason }
+              : c
+          )
+        )
+      }
+      if (data?.itemId) {
+        setReports((prev) =>
+          prev.map((r) =>
+            r._id === data.itemId ? { ...r, status: data.itemStatus || r.status } : r
+          )
+        )
+      }
+      fetchData()
+    }
+
+    const handleStatusUpdated = (data) => {
+      if (data?.itemId) {
+        setReports((prev) =>
+          prev.map((r) => (r._id === data.itemId ? { ...r, status: data.status } : r))
+        )
+        setClaims((prev) =>
+          prev.map((c) =>
+            (c.item?._id || c.item) === data.itemId
+              ? { ...c, item: { ...(c.item || {}), status: data.status } }
+              : c
+          )
+        )
+      }
+    }
+
+    const handleNewMessage = (msg) => {
+      const convId = (msg.conversationId || msg.conversation?._id || msg.conversation)?.toString()
+      setConversations((prev) => {
+        return prev.map((c) => {
+          if (c._id.toString() === convId) {
+            const senderId = (msg.sender?._id || msg.sender)?.toString()
+            const isMe = user?._id && senderId === user._id.toString()
+            const unread = isMe ? (c.computedUnreadCount || 0) : (c.computedUnreadCount || 0) + 1
+            return {
+              ...c,
+              lastMessage: msg.text,
+              lastMessageAt: msg.createdAt,
+              computedUnreadCount: unread
+            }
+          }
+          return c
+        }).sort((a, b) => new Date(b.lastMessageAt || 0) - new Date(a.lastMessageAt || 0))
+      })
+    }
+
+    const handleConversationUpdated = ({ conversationId, lastMessage, lastMessageAt }) => {
+      setConversations((prev) => {
+        return prev.map((c) => {
+          if (c._id.toString() === conversationId.toString()) {
+            return { ...c, lastMessage, lastMessageAt }
+          }
+          return c
+        }).sort((a, b) => new Date(b.lastMessageAt || 0) - new Date(a.lastMessageAt || 0))
+      })
+    }
+
+    socket.on('claim_submitted', handleClaimSubmitted)
+    socket.on('claim_status_updated', handleClaimStatusUpdated)
+    socket.on('claim_info_requested', handleClaimSubmitted)
+    socket.on('claim_info_responded', handleClaimSubmitted)
+    socket.on('case_status_updated', handleStatusUpdated)
+    socket.on('item_status_updated', handleStatusUpdated)
+    socket.on('new_message', handleNewMessage)
+    socket.on('conversation_updated', handleConversationUpdated)
+
+    return () => {
+      socket.off('claim_submitted', handleClaimSubmitted)
+      socket.off('claim_status_updated', handleClaimStatusUpdated)
+      socket.off('claim_info_requested', handleClaimSubmitted)
+      socket.off('claim_info_responded', handleClaimSubmitted)
+      socket.off('case_status_updated', handleStatusUpdated)
+      socket.off('item_status_updated', handleStatusUpdated)
+      socket.off('new_message', handleNewMessage)
+      socket.off('conversation_updated', handleConversationUpdated)
+    }
+  }, [socket, fetchData, user?._id])
 
   const handleToggleStatus = async (itemId, currentStatus) => {
     const nextStatus = currentStatus === 'Resolved' ? 'Active' : 'Resolved'
@@ -180,6 +279,11 @@ export default function Dashboard() {
         >
           <span className="material-symbols-outlined text-[20px]">chat</span>
           <span>Secure Messages ({conversations.length})</span>
+          {conversations.filter(c => (c.computedUnreadCount || 0) > 0).length > 0 && (
+            <span className="px-1.5 py-0.2 rounded-full bg-error text-white text-[10px] font-bold">
+              {conversations.filter(c => (c.computedUnreadCount || 0) > 0).length} new
+            </span>
+          )}
         </button>
       </div>
 
@@ -362,7 +466,36 @@ export default function Dashboard() {
 
           {/* TAB 3: CHATS */}
           {activeTab === 'chats' && (
-            <div>
+            <div className="space-y-4">
+              {/* Filter & Search Bar */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-surface-container-lowest p-3 rounded-2xl border border-outline-variant">
+                <div className="relative w-full sm:w-72">
+                  <span className="material-symbols-outlined text-[18px] text-outline absolute left-3 top-2.5">search</span>
+                  <input
+                    type="text"
+                    value={chatSearch}
+                    onChange={(e) => setChatSearch(e.target.value)}
+                    placeholder="Search by case, name, message..."
+                    className="w-full pl-9 pr-3 py-1.5 bg-surface border border-outline-variant rounded-xl text-body-sm text-on-surface placeholder:text-outline focus:ring-2 focus:ring-primary/20"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setUnreadOnly((prev) => !prev)}
+                    className={`px-3 py-1.5 rounded-xl text-label-md font-semibold border transition-all flex items-center gap-1.5 ${
+                      unreadOnly
+                        ? 'bg-primary text-on-primary border-primary'
+                        : 'bg-surface border-outline-variant text-on-surface-variant hover:bg-surface-container'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-[16px]">mark_email_unread</span>
+                    <span>Unread Only</span>
+                  </button>
+                </div>
+              </div>
+
               {conversations.length === 0 ? (
                 <EmptyState
                   icon="chat_bubble_outline"
@@ -372,39 +505,123 @@ export default function Dashboard() {
                   actionLink="/"
                 />
               ) : (
-                <div className="space-y-3">
-                  {conversations.map((convo) => {
-                    const itemData = convo.item || {}
-                    return (
-                      <div
-                        key={convo._id}
-                        className="bg-surface-container-lowest rounded-2xl border border-outline-variant p-4 shadow-xs flex items-center justify-between gap-4 hover:border-primary transition-all"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-12 h-12 rounded-xl bg-surface-container flex items-center justify-center text-primary">
-                            <span className="material-symbols-outlined text-[24px]">chat</span>
-                          </div>
-                          <div>
-                            <h4 className="text-body-md font-bold text-primary">
-                              Case: {itemData.title || 'Property Coordination'}
-                            </h4>
-                            <p className="text-label-sm font-label-sm text-outline">
-                              Channel ID: #{convo._id?.slice(-6).toUpperCase()} &bull; Last updated {new Date(convo.updatedAt || convo.createdAt).toLocaleDateString()}
-                            </p>
-                          </div>
-                        </div>
+                (() => {
+                  const filtered = conversations.filter((convo) => {
+                    if (unreadOnly && (convo.computedUnreadCount || 0) === 0) return false
+                    if (!chatSearch.trim()) return true
+                    const term = chatSearch.toLowerCase()
+                    const itemTitle = (convo.item?.title || '').toLowerCase()
+                    const lastMsg = (convo.lastMessage || '').toLowerCase()
+                    const other = convo.participants?.find((p) => (p._id || p)?.toString() !== user?._id?.toString())
+                    const name = (other?.name || '').toLowerCase()
+                    return itemTitle.includes(term) || lastMsg.includes(term) || name.includes(term)
+                  })
 
-                        <Link
-                          to={`/item/${itemData._id || itemData}?action=chat`}
-                          className="px-4 py-2 rounded-xl bg-primary text-on-primary text-body-sm font-semibold flex items-center gap-1 shadow-xs hover:bg-primary-container transition-colors"
-                        >
-                          <span>Open Channel</span>
-                          <span className="material-symbols-outlined text-[16px]">open_in_new</span>
-                        </Link>
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="p-8 text-center bg-surface-container-lowest rounded-2xl border border-outline-variant">
+                        <p className="text-body-md text-on-surface-variant">No conversations matched your filter.</p>
                       </div>
                     )
-                  })}
-                </div>
+                  }
+
+                  return (
+                    <div className="space-y-3">
+                      {filtered.map((convo) => {
+                        const itemData = convo.item || {}
+                        const otherParticipant = convo.participants?.find(
+                          (p) => (p._id || p)?.toString() !== user?._id?.toString()
+                        ) || {}
+                        const hasUnread = (convo.computedUnreadCount || 0) > 0
+                        const counterpartInitial = otherParticipant.name
+                          ? otherParticipant.name.charAt(0).toUpperCase()
+                          : 'C'
+
+                        return (
+                          <div
+                            key={convo._id}
+                            className={`bg-surface-container-lowest rounded-2xl border p-4 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4 transition-all hover:border-primary ${
+                              hasUnread ? 'border-primary/60 bg-primary/5' : 'border-outline-variant'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3.5 min-w-0">
+                              {/* Item image or fallback */}
+                              <div className="w-14 h-14 rounded-xl bg-surface-container overflow-hidden border border-outline-variant shrink-0 relative">
+                                {itemData.imageUrl ? (
+                                  <img
+                                    src={itemData.imageUrl}
+                                    alt={itemData.title || 'Case'}
+                                    className="w-full h-full object-cover"
+                                  />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center text-primary">
+                                    <span className="material-symbols-outlined text-[24px]">inventory_2</span>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-label-sm font-label-sm font-mono text-outline uppercase">
+                                    CASE #{itemData._id?.slice(-6).toUpperCase() || convo._id?.slice(-6).toUpperCase()}
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant text-[11px] font-semibold border border-outline-variant">
+                                    {convo.conversationType === 'claim_coordination'
+                                      ? 'Claim Coordination'
+                                      : 'Direct Inquiry'}
+                                  </span>
+                                  {convo.claim && (
+                                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold uppercase ${
+                                      convo.claim.status === 'approved'
+                                        ? 'bg-secondary-container text-on-secondary-fixed-variant'
+                                        : convo.claim.status === 'rejected'
+                                        ? 'bg-error-container text-on-error-container'
+                                        : 'bg-amber-100 text-amber-800'
+                                    }`}>
+                                      Claim: {convo.claim.status}
+                                    </span>
+                                  )}
+                                  {hasUnread && (
+                                    <span className="px-2 py-0.5 rounded-full bg-error text-white text-[10px] font-bold">
+                                      {convo.computedUnreadCount} new
+                                    </span>
+                                  )}
+                                </div>
+
+                                <h4 className="text-body-md font-bold text-primary truncate mt-0.5">
+                                  {itemData.title || 'Civic Case Item'}
+                                </h4>
+
+                                <div className="flex items-center gap-2 text-label-sm font-label-sm text-outline mt-0.5">
+                                  <span className="flex items-center gap-1 text-on-surface-variant font-medium">
+                                    <span className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[10px] font-bold inline-flex items-center justify-center">
+                                      {counterpartInitial}
+                                    </span>
+                                    <span>{otherParticipant.name || 'Case Participant'}</span>
+                                  </span>
+                                  <span>&bull;</span>
+                                  <span className="truncate max-w-[220px]">
+                                    {convo.lastMessage || 'Channel opened'}
+                                  </span>
+                                  <span>&bull;</span>
+                                  <span>{formatTimeAgo(convo.lastMessageAt || convo.updatedAt)}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <Link
+                              to={`/item/${itemData._id || itemData}?action=chat&convoId=${convo._id}`}
+                              className="w-full md:w-auto px-4 py-2.5 rounded-xl bg-primary text-on-primary text-body-sm font-semibold flex items-center justify-center gap-1.5 shadow-xs hover:bg-primary-container transition-colors shrink-0"
+                            >
+                              <span>Open Channel</span>
+                              <span className="material-symbols-outlined text-[16px]">open_in_new</span>
+                            </Link>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )
+                })()
               )}
             </div>
           )}

@@ -3,6 +3,8 @@ const mongoose = require('mongoose');
 const conversationSchema = new mongoose.Schema({
   item: { type: mongoose.Schema.Types.ObjectId, ref: 'Item', required: true },
   participants: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }],
+  claim: { type: mongoose.Schema.Types.ObjectId, ref: 'Claim', default: null },
+  conversationType: { type: String, enum: ['inquiry', 'claim_coordination', 'handover'], default: 'inquiry' },
   lastMessage: { type: String, default: '' },
   lastMessageAt: { type: Date, default: Date.now },
   unreadCount: { type: Map, of: Number, default: {} }, // userId -> unread count

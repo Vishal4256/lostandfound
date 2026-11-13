@@ -41,8 +41,12 @@ export default function Footer() {
           <Link to="/dashboard" className="text-on-surface-variant hover:text-primary underline transition-colors duration-150">
             Official Registry Desk
           </Link>
-          <a href="/#dispatch" className="text-on-surface-variant hover:text-primary underline transition-colors duration-150">
-            24/7 Civic Dispatch
+          <a
+            href="tel:+918092982304"
+            className="text-on-surface-variant hover:text-primary underline transition-colors duration-150 inline-flex items-center gap-1 font-semibold text-secondary"
+          >
+            <span className="material-symbols-outlined text-[15px]">support_agent</span>
+            Customer Care: +91 8092982304
           </a>
         </div>
       </div>
