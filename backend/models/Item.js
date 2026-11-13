@@ -96,16 +96,29 @@ const itemSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['Active', 'Pending Claim', 'Resolved'],
+    enum: ['Active', 'Pending Claim', 'Handover Pending', 'Resolved', 'Closed'],
     default: 'Active',
     set: function(val) {
       if (!val) return 'Active';
       const clean = val.toLowerCase().replace(/_/g, ' ');
       if (clean === 'active') return 'Active';
       if (clean === 'pending claim' || clean === 'pending_claim' || clean === 'pending') return 'Pending Claim';
-      if (clean === 'resolved') return 'Resolved';
+      if (clean === 'handover pending' || clean === 'handover_pending' || clean === 'handover') return 'Handover Pending';
+      if (clean === 'resolved' || clean === 'reunited') return 'Resolved';
+      if (clean === 'closed' || clean === 'close') return 'Closed';
       return val;
     }
+  },
+  statusHistory: [{
+    status: { type: String, required: true },
+    changedAt: { type: Date, default: Date.now },
+    changedBy: { type: mongoose.Schema.ObjectId, ref: 'User' },
+    note: { type: String, default: '' }
+  }],
+  handover: {
+    completedAt: { type: Date },
+    completedBy: { type: mongoose.Schema.ObjectId, ref: 'User' },
+    notes: { type: String, default: '' }
   },
   embedding: {
     type: [Number],

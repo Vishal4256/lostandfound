@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 
@@ -10,13 +10,13 @@ export default function Navbar() {
   const [mobileMenu, setMobileMenu] = useState(false)
   const [globalSearch, setGlobalSearch] = useState('')
 
-  // Close dropdowns on route change without cascading effect render
-  const [prevPathname, setPrevPathname] = useState(pathname)
-  if (prevPathname !== pathname) {
-    setPrevPathname(pathname)
+  // Close dropdowns on route change
+  useEffect(() => {
+    // eslint-disable-next-line react/set-state-in-effect
     setProfileDropdown(false)
+    // eslint-disable-next-line react/set-state-in-effect
     setMobileMenu(false)
-  }
+  }, [pathname])
 
   const handleSearchSubmit = (e) => {
     e.preventDefault()

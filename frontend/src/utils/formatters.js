@@ -41,3 +41,63 @@ export function formatTimeAgo(dateStr) {
     return 'Recently'
   }
 }
+
+/**
+ * Human-readable status definitions and theme metadata
+ */
+export function getStatusMeta(status, type) {
+  const normStatus = (status || '').toLowerCase().replace(/_/g, ' ')
+  const normType = (type || '').toLowerCase()
+
+  if (normStatus === 'closed') {
+    return {
+      label: 'Case Closed',
+      description: 'This case has been completed and archived.',
+      badgeClass: 'bg-surface-container text-on-surface-variant border-outline-variant',
+      icon: 'archive'
+    }
+  }
+
+  if (normStatus === 'resolved' || normStatus === 'reunited') {
+    return {
+      label: 'Successfully Reunited',
+      description: 'This item has been returned to its rightful owner.',
+      badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+      icon: 'check_circle'
+    }
+  }
+
+  if (normStatus === 'handover pending' || normStatus === 'ready for handover') {
+    return {
+      label: 'Ready for Handover',
+      description: 'Ownership verified. Coordinator and owner are arranging return.',
+      badgeClass: 'bg-sky-50 text-sky-800 border-sky-200',
+      icon: 'handshake'
+    }
+  }
+
+  if (normStatus.includes('pending') || normStatus === 'under review') {
+    return {
+      label: 'Claim Under Review',
+      description: 'An ownership claim has been submitted and is awaiting verification.',
+      badgeClass: 'bg-amber-50 text-amber-800 border-amber-200',
+      icon: 'hourglass_top'
+    }
+  }
+
+  if (normType === 'found') {
+    return {
+      label: 'Found – Waiting for Owner',
+      description: 'Turned in by a finder. Waiting for the owner to claim.',
+      badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+      icon: 'verified'
+    }
+  }
+
+  return {
+    label: 'Lost – Waiting for a Match',
+    description: 'Reported lost. Scanning directory for matching found reports.',
+    badgeClass: 'bg-orange-50 text-orange-800 border-orange-200',
+    icon: 'search'
+  }
+}

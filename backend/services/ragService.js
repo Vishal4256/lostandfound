@@ -212,7 +212,7 @@ Matched Features: ${rec.reason}`;
  * @param {Array} [params.conversationHistory] - Optional previous conversation turns
  * @returns {Promise<Object>} - Grounded response and matching items
  */
-async function processRagQuery({ query, conversationHistory = [] }) {
+async function processRagQuery({ query, conversationHistory = [], caseContext = null }) {
   if (!query || typeof query !== 'string' || !query.trim()) {
     return {
       answer: 'Please describe the lost or found property you are inquiring about.',
@@ -227,26 +227,39 @@ async function processRagQuery({ query, conversationHistory = [] }) {
   const retrievedMatches = await retrieveRelevantItems(cleanQuery, 5);
   const groundedContext = buildGroundedContext(cleanQuery, retrievedMatches);
 
+  let activeCaseContext = '';
+  if (caseContext && typeof caseContext === 'object') {
+    activeCaseContext = `\nCURRENT CASE BEING VIEWED BY USER:
+- Title: ${caseContext.title || 'Untitled'}
+- Case ID: ${caseContext.itemId || 'Unknown'}
+- Type: ${(caseContext.type || 'Item').toUpperCase()}
+- Category: ${caseContext.category || 'General'}
+- Status: ${caseContext.status || 'Active'}
+- Location: ${caseContext.location || 'Civic Area'}
+- Description: ${caseContext.description || 'None provided'}
+`;
+  }
+
   // 2. Prepare Gemini Prompt & Grounding Instructions
   const systemInstruction = `You are the HavenFind AI Recovery Assistant for HavenFind (Civic Lost & Found Recovery Network).
-Your role is to assist citizens in identifying whether their lost or found property has been recorded in the civic registry.
+Your role is to assist citizens in identifying whether their lost or found property has been recorded in the civic registry, explaining the recovery workflow, and guiding them through claims or handovers.
 
 CRITICAL GROUNDING RULES:
-1. Base your response EXCLUSIVELY on the retrieved HavenFind registry records provided in the context below.
-2. If NO records were found or the context says "NO RELEVANT HAVENFIND REGISTRY RECORDS FOUND", state clearly and politely that no matching public reports were found in the HavenFind registry. Suggest refining the search with brand, color, specific area, or filing a new Lost/Found report via the "Submit Item" button.
-3. NEVER invent, imagine, or hallucinate case numbers, items, users, locations, dates, or details.
-4. When mentioning an item, refer to its exact Title, Type (LOST or FOUND), Location, and Item ID from the records.
+1. Base your response EXCLUSIVELY on the retrieved HavenFind registry records and current case context provided below.
+2. If the user asks about the current case they are viewing, refer to the CURRENT CASE context to explain next steps (e.g. submitting a claim with proof, waiting for reporter review, coordinating handover once approved, or marking reunited).
+3. If NO records were found or the context says "NO RELEVANT HAVENFIND REGISTRY RECORDS FOUND", state clearly and politely that no matching public reports were found in the HavenFind registry. Suggest refining the search or submitting a new report.
+4. NEVER invent, imagine, or hallucinate case numbers, items, users, locations, dates, or details.
 5. NEVER claim that an item is definitively the user's property; state that it is a potential match they should review.
 6. NEVER reveal, ask for, or attempt to guess confidential verification markers (e.g. hidden serial numbers, secret engravings).
 7. Format your response cleanly using concise Markdown with bold highlights and bullet points.`;
 
-  const promptContent = `Retrieved Registry Context:
+  const promptContent = `${activeCaseContext ? activeCaseContext + '\n' : ''}Retrieved Registry Context:
 ${groundedContext}
 
 User Inquiry:
 "${cleanQuery}"
 
-Provide a concise, grounded response based strictly on the retrieved records.`;
+Provide a concise, grounded response based strictly on the retrieved records and case context.`;
 
   // 3. Generate response using Google Gemini if API Key is configured
   let generatedAnswer = null;

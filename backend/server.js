@@ -114,7 +114,7 @@ io.on('connection', (socket) => {
       const Conversation = require('./models/Conversation');
       const conv = await Conversation.findById(conversationId);
       if (conv && conv.participants.some(p => p.toString() === socket.userId.toString())) {
-        socket.join(conversationId);
+        socket.join(conversationId.toString());
       }
     } catch (err) {
       console.error('Socket room join error:', err.message);
@@ -124,14 +124,28 @@ io.on('connection', (socket) => {
   // Leave conversation room
   socket.on('leave_conversation', (conversationId) => {
     if (conversationId) {
-      socket.leave(conversationId);
+      socket.leave(conversationId.toString());
     }
   });
 
   // Typing status broadcast
   socket.on('typing', ({ conversationId, userName, isTyping }) => {
-    if (conversationId && socket.rooms.has(conversationId)) {
-      socket.to(conversationId).emit('user_typing', { userName, isTyping });
+    const roomId = conversationId?.toString();
+    if (roomId && socket.rooms.has(roomId)) {
+      socket.to(roomId).emit('user_typing', {
+        userName: userName || 'Someone',
+        isTyping: isTyping !== undefined ? Boolean(isTyping) : true
+      });
+    }
+  });
+
+  socket.on('stop_typing', ({ conversationId }) => {
+    const roomId = conversationId?.toString();
+    if (roomId && socket.rooms.has(roomId)) {
+      socket.to(roomId).emit('user_typing', {
+        userName: '',
+        isTyping: false
+      });
     }
   });
 

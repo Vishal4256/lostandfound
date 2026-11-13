@@ -44,7 +44,10 @@ exports.getOrCreateConversation = async (req, res) => {
     }
 
     // Default recipient is the item's reporter if not provided
-    const targetRecipientId = recipientId || item.reportedBy || item.reporterId;
+    let rawRecipient = recipientId || item.reportedBy || item.reporterId;
+    const targetRecipientId = (rawRecipient && typeof rawRecipient === 'object' && rawRecipient._id)
+      ? rawRecipient._id.toString()
+      : rawRecipient?.toString();
 
     if (!targetRecipientId || !mongoose.Types.ObjectId.isValid(targetRecipientId)) {
       return res.status(400).json({ success: false, message: 'Valid recipient not found for this item' });
@@ -160,13 +163,15 @@ exports.sendMessage = async (req, res) => {
     await conversation.save();
 
     const populated = await Message.findById(message._id).populate('sender', 'name email avatar');
+    const messagePayload = populated.toObject();
+    messagePayload.conversationId = conversationId.toString();
 
     // If req.io is attached, emit real-time event to the room
     if (req.io) {
-      req.io.to(conversationId).emit('new_message', populated);
+      req.io.to(conversationId.toString()).emit('new_message', messagePayload);
     }
 
-    res.status(201).json({ success: true, message: populated });
+    res.status(201).json({ success: true, message: messagePayload });
   } catch (error) {
     console.error('Error sending message:', error);
     res.status(500).json({ success: false, message: 'Server error sending message' });

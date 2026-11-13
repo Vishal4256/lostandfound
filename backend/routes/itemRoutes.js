@@ -11,6 +11,10 @@ const {
   getItemById,
   reverseGeocode,
   updateItemStatus,
+  updateItemDetails,
+  confirmHandover,
+  closeCase,
+  reopenCase,
   deleteItem
 } = require('../controllers/itemController');
 
@@ -25,6 +29,10 @@ router.get('/:id', getItemById);
 // Protected actions
 router.post('/', protect, uploadSingle('image'), createListing);
 router.patch('/:id/status', protect, updateItemStatus);
+router.patch('/:id', protect, updateItemDetails);
+router.post('/:id/handover', protect, confirmHandover);
+router.post('/:id/close', protect, closeCase);
+router.post('/:id/reopen', protect, reopenCase);
 router.delete('/:id', protect, deleteItem);
 
 module.exports = router;

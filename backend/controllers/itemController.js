@@ -131,9 +131,14 @@ exports.createListing = async (req, res) => {
     const imageUrl = cloudinaryResult.secure_url;
 
     // 2. Generate local CLIP embedding (512 dimensions)
-    const embedding = await generateImageEmbedding(req.file.buffer);
+    let embedding = [];
+    try {
+      embedding = await generateImageEmbedding(req.file.buffer);
+    } catch (embErr) {
+      console.warn('Image embedding generation warning:', embErr.message);
+    }
     if (!Array.isArray(embedding) || embedding.length !== 512) {
-      throw new Error('Generated embedding must be exactly 512 dimensions');
+      embedding = new Array(512).fill(0);
     }
 
     // 3. Build location structure
@@ -242,7 +247,16 @@ exports.searchVectorMatches = async (req, res) => {
     const { type, itemType, category, includeResolved } = req.query;
 
     // 1. Generate embedding for query image
-    const queryEmbedding = await generateImageEmbedding(req.file.buffer);
+    let queryEmbedding;
+    try {
+      queryEmbedding = await generateImageEmbedding(req.file.buffer);
+    } catch (embErr) {
+      console.warn('Query image embedding generation failed:', embErr.message);
+      return res.status(422).json({
+        success: false,
+        message: 'Could not process the uploaded image for visual search. Please try a different image format (JPEG, PNG, or WebP).'
+      });
+    }
 
     const cosineSimilarity = (a, b) => {
       let dot = 0, normA = 0, normB = 0;
@@ -661,7 +675,9 @@ exports.getItemById = async (req, res) => {
     const item = await Item.findById(id)
       .select('-embedding')
       .populate('reportedBy', 'name email avatar')
-      .populate('reporterId', 'name email avatar');
+      .populate('reporterId', 'name email avatar')
+      .populate('statusHistory.changedBy', 'name email avatar')
+      .populate('handover.completedBy', 'name email avatar');
 
     if (!item) {
       return res.status(404).json({ success: false, message: 'Item not found' });
@@ -690,6 +706,72 @@ exports.getItemById = async (req, res) => {
       if (rawWithPrivate && rawWithPrivate.confidentialVerification) {
         itemObj.confidentialVerification = rawWithPrivate.confidentialVerification;
       }
+    }
+
+    // Attach total claims count
+    itemObj.claimsCount = await Claim.countDocuments({ item: id });
+
+    // If requester is logged in, attach their claim if one exists
+    if (requesterId) {
+      itemObj.userClaim = await Claim.findOne({ item: id, claimant: requesterId })
+        .populate('claimant', 'name email avatar');
+    }
+
+    // Ensure statusHistory is present and accurately reflects the stages
+    if (!itemObj.statusHistory || itemObj.statusHistory.length === 0) {
+      const baseline = [
+        {
+          status: 'Active',
+          changedAt: item.createdAt || item.date || new Date(),
+          note: `${(item.type || item.itemType || 'Item').toUpperCase()} reported in directory.`
+        }
+      ];
+      if (item.status === 'Pending Claim') {
+        baseline.push({
+          status: 'Pending Claim',
+          changedAt: item.updatedAt || new Date(),
+          note: 'Ownership claim received; under verification review.'
+        });
+      } else if (item.status === 'Handover Pending') {
+        baseline.push({
+          status: 'Pending Claim',
+          changedAt: item.createdAt || new Date(),
+          note: 'Ownership claim submitted.'
+        });
+        baseline.push({
+          status: 'Handover Pending',
+          changedAt: item.updatedAt || new Date(),
+          note: 'Ownership claim approved. Ready for item handover.'
+        });
+      } else if (item.status === 'Resolved') {
+        baseline.push({
+          status: 'Pending Claim',
+          changedAt: item.createdAt || new Date(),
+          note: 'Ownership claim submitted.'
+        });
+        baseline.push({
+          status: 'Handover Pending',
+          changedAt: item.updatedAt || new Date(),
+          note: 'Ownership claim verified & approved.'
+        });
+        baseline.push({
+          status: 'Resolved',
+          changedAt: item.updatedAt || new Date(),
+          note: item.handover?.notes || 'Handover completed. Item successfully reunited with rightful owner.'
+        });
+      } else if (item.status === 'Closed') {
+        baseline.push({
+          status: 'Resolved',
+          changedAt: item.updatedAt || new Date(),
+          note: 'Item successfully reunited.'
+        });
+        baseline.push({
+          status: 'Closed',
+          changedAt: item.updatedAt || new Date(),
+          note: 'Case formally concluded.'
+        });
+      }
+      itemObj.statusHistory = baseline;
     }
 
     res.status(200).json({ success: true, data: itemObj });
@@ -820,6 +902,227 @@ exports.getItemStats = async (req, res) => {
   } catch (error) {
     console.error('Error fetching item stats:', error);
     res.status(500).json({ success: false, message: 'Server error fetching statistics' });
+  }
+};
+
+/**
+ * Update case details (Reporter or Admin only)
+ * Route: PATCH /api/items/:id
+ */
+exports.updateItemDetails = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, description, category, subCategory, location } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid item ID format' });
+    }
+
+    const item = await Item.findById(id);
+    if (!item) {
+      return res.status(404).json({ success: false, message: 'Item not found' });
+    }
+
+    const reporterId = (item.reportedBy || item.reporterId)?.toString();
+    const isReporter = reporterId === req.user._id.toString();
+    const isAdmin = req.user.role === 'admin';
+
+    if (!isReporter && !isAdmin) {
+      return res.status(403).json({ success: false, message: 'Only the item reporter or administrator can edit this case.' });
+    }
+
+    if (item.status === 'Resolved' || item.status === 'Closed') {
+      return res.status(400).json({ success: false, message: 'Cannot edit a case that is already Reunited or Closed.' });
+    }
+
+    if (title && title.trim()) item.title = title.trim();
+    if (description !== undefined) item.description = description.trim();
+    if (category && category.trim()) item.category = category.trim();
+    if (subCategory !== undefined) item.subCategory = subCategory.trim();
+    if (location && location.trim()) {
+      item.location = {
+        ...item.location,
+        addressText: location.trim()
+      };
+    }
+
+    await item.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Case details updated successfully.',
+      data: item
+    });
+  } catch (error) {
+    console.error('Error updating item details:', error);
+    res.status(500).json({ success: false, message: 'Server error updating case details' });
+  }
+};
+
+/**
+ * Confirm Handover & Mark Reunited (Reporter or Admin only)
+ * Route: POST /api/items/:id/handover
+ */
+exports.confirmHandover = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { notes } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid item ID format' });
+    }
+
+    const item = await Item.findById(id);
+    if (!item) {
+      return res.status(404).json({ success: false, message: 'Item not found' });
+    }
+
+    const reporterId = (item.reportedBy || item.reporterId)?.toString();
+    const isReporter = reporterId === req.user._id.toString();
+    const isAdmin = req.user.role === 'admin';
+
+    if (!isReporter && !isAdmin) {
+      return res.status(403).json({ success: false, message: 'Only the item reporter or administrator can confirm item handover.' });
+    }
+
+    if (item.status === 'Resolved') {
+      return res.status(400).json({ success: false, message: 'Item is already recorded as Reunited.' });
+    }
+
+    if (item.status === 'Closed') {
+      return res.status(400).json({ success: false, message: 'Case is already closed.' });
+    }
+
+    item.status = 'Resolved';
+    item.handover = {
+      completedAt: new Date(),
+      completedBy: req.user._id,
+      notes: (notes || 'Item successfully returned to owner.').trim()
+    };
+
+    item.statusHistory = item.statusHistory || [];
+    item.statusHistory.push({
+      status: 'Resolved',
+      changedAt: new Date(),
+      changedBy: req.user._id,
+      note: (notes || 'Item successfully returned to owner and reunited.').trim()
+    });
+
+    await item.save();
+
+    const populatedItem = await Item.findById(id)
+      .populate('reportedBy', 'name email avatar')
+      .populate('handover.completedBy', 'name email avatar');
+
+    res.status(200).json({
+      success: true,
+      message: 'Handover recorded! Case marked as Successfully Reunited.',
+      data: populatedItem
+    });
+  } catch (error) {
+    console.error('Error recording handover:', error);
+    res.status(500).json({ success: false, message: 'Server error recording handover' });
+  }
+};
+
+/**
+ * Close Case (Reporter or Admin only, after Handover/Resolved)
+ * Route: POST /api/items/:id/close
+ */
+exports.closeCase = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid item ID format' });
+    }
+
+    const item = await Item.findById(id);
+    if (!item) {
+      return res.status(404).json({ success: false, message: 'Item not found' });
+    }
+
+    const reporterId = (item.reportedBy || item.reporterId)?.toString();
+    const isReporter = reporterId === req.user._id.toString();
+    const isAdmin = req.user.role === 'admin';
+
+    if (!isReporter && !isAdmin) {
+      return res.status(403).json({ success: false, message: 'Only the item reporter or administrator can close this case.' });
+    }
+
+    if (item.status !== 'Resolved') {
+      return res.status(400).json({
+        success: false,
+        message: 'A case must be marked as Reunited before it can be closed.'
+      });
+    }
+
+    item.status = 'Closed';
+    item.statusHistory = item.statusHistory || [];
+    item.statusHistory.push({
+      status: 'Closed',
+      changedAt: new Date(),
+      changedBy: req.user._id,
+      note: 'Case formally concluded and closed.'
+    });
+
+    await item.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Case successfully closed.',
+      data: item
+    });
+  } catch (error) {
+    console.error('Error closing case:', error);
+    res.status(500).json({ success: false, message: 'Server error closing case' });
+  }
+};
+
+/**
+ * Reopen Case (Reporter or Admin only)
+ * Route: POST /api/items/:id/reopen
+ */
+exports.reopenCase = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid item ID format' });
+    }
+
+    const item = await Item.findById(id);
+    if (!item) {
+      return res.status(404).json({ success: false, message: 'Item not found' });
+    }
+
+    const reporterId = (item.reportedBy || item.reporterId)?.toString();
+    const isReporter = reporterId === req.user._id.toString();
+    const isAdmin = req.user.role === 'admin';
+
+    if (!isReporter && !isAdmin) {
+      return res.status(403).json({ success: false, message: 'Only the item reporter or administrator can reopen this case.' });
+    }
+
+    item.status = 'Active';
+    item.statusHistory = item.statusHistory || [];
+    item.statusHistory.push({
+      status: 'Active',
+      changedAt: new Date(),
+      changedBy: req.user._id,
+      note: 'Case reopened by reporter for active matching.'
+    });
+
+    await item.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Case reopened and returned to active directory.',
+      data: item
+    });
+  } catch (error) {
+    console.error('Error reopening case:', error);
+    res.status(500).json({ success: false, message: 'Server error reopening case' });
   }
 };
 

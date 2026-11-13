@@ -12,16 +12,15 @@ export default function ItemDetail() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { user, isAuthenticated } = useAuth()
-  const socket = useSocket()
+  const { socket } = useSocket() || {}
 
+  // Primary Item State
   const [item, setItem] = useState(null)
   const [loading, setLoading] = useState(true)
-
-  // Selected angle/image
   const [activeImageIndex, setActiveImageIndex] = useState(0)
   const [inspectModal, setInspectModal] = useState(false)
 
-  // Claims state
+  // Claims State (For Reporter & Claimant)
   const [claims, setClaims] = useState([])
   const [claimsLoading, setClaimsLoading] = useState(false)
   const [claimModalOpen, setClaimModalOpen] = useState(() => searchParams.get('action') === 'claim')
@@ -30,12 +29,45 @@ export default function ItemDetail() {
   const [proofFile, setProofFile] = useState(null)
   const [proofPreview, setProofPreview] = useState(null)
   const [submittingClaim, setSubmittingClaim] = useState(false)
-  const [actioningClaimId, setActioningClaimId] = useState(null)
 
-  // Chat messenger state
+  // Review & Decision Modals (Reporter Actions)
+  const [actionClaim, setActionClaim] = useState(null)
+  const [approveModalOpen, setApproveModalOpen] = useState(false)
+  const [rejectModalOpen, setRejectModalOpen] = useState(false)
+  const [requestInfoModalOpen, setRequestInfoModalOpen] = useState(false)
+  const [decisionReason, setDecisionReason] = useState('')
+  const [infoRequestMessage, setInfoRequestMessage] = useState('')
+  const [actioningClaim, setActioningClaim] = useState(false)
+
+  // Claimant Response Modal
+  const [respondModalOpen, setRespondModalOpen] = useState(false)
+  const [claimantResponseText, setClaimantResponseText] = useState('')
+  const [submittingResponse, setSubmittingResponse] = useState(false)
+
+  // Case Lifecycle Modals
+  const [handoverModalOpen, setHandoverModalOpen] = useState(false)
+  const [handoverNotes, setHandoverNotes] = useState('')
+  const [submittingHandover, setSubmittingHandover] = useState(false)
+
+  const [recoveryRecordModalOpen, setRecoveryRecordModalOpen] = useState(false)
+  const [closeCaseModalOpen, setCloseCaseModalOpen] = useState(false)
+  const [reopenCaseModalOpen, setReopenCaseModalOpen] = useState(false)
+  const [submittingStatusChange, setSubmittingStatusChange] = useState(false)
+
+  // Edit Case Modal
+  const [editModalOpen, setEditModalOpen] = useState(false)
+  const [editTitle, setEditTitle] = useState('')
+  const [editDescription, setEditDescription] = useState('')
+  const [editCategory, setEditCategory] = useState('')
+  const [editSubCategory, setEditSubCategory] = useState('')
+  const [editLocation, setEditLocation] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
+
+  // Chat Messenger State
   const [chatOpen, setChatOpen] = useState(() => ['sighting', 'chat'].includes(searchParams.get('action')))
   const [conversation, setConversation] = useState(null)
-  const [_conversations, setConversations] = useState([])
+  const [conversationsList, setConversationsList] = useState([])
+  const [activeChatRecipientId, setActiveChatRecipientId] = useState(null)
   const [messages, setMessages] = useState([])
   const [msgText, setMsgText] = useState('')
   const [sending, setSending] = useState(false)
@@ -43,22 +75,29 @@ export default function ItemDetail() {
   const messagesEndRef = useRef(null)
   const typingTimeoutRef = useRef(null)
 
-  // Ownership check
-  const isOwner = Boolean(
-    user && item && (
-      (item.reportedBy?._id || item.reportedBy) === user._id ||
-      (item.reporterId?._id || item.reporterId) === user._id
-    )
-  )
+  // Technical Details Drawer (Optional Power-user view)
+  const [techDetailsOpen, setTechDetailsOpen] = useState(false)
 
+  // Ownership & Permissions Check
+  const reporterId = (item?.reportedBy?._id || item?.reportedBy || item?.reporterId?._id || item?.reporterId)?.toString()
+  const isOwner = Boolean(user && reporterId && user._id?.toString() === reporterId)
+  const isAdmin = Boolean(user && user.role === 'admin')
+  const canManage = isOwner || isAdmin
+
+  // Fetch Item Dossier
   const fetchItem = useCallback(async () => {
     try {
       const { data } = await api.get(`/api/items/${id}`)
       if (data.success && data.data) {
         setItem(data.data)
+        setEditTitle(data.data.title || '')
+        setEditDescription(data.data.description || '')
+        setEditCategory(data.data.category || 'Other')
+        setEditSubCategory(data.data.subCategory || '')
+        setEditLocation(data.data.location?.addressText || '')
       }
     } catch {
-      toast.error('Municipal listing file not found')
+      toast.error('Could not find case record in the registry.')
       navigate('/')
     } finally {
       setLoading(false)
@@ -70,9 +109,9 @@ export default function ItemDetail() {
     fetchItem()
   }, [fetchItem])
 
-  // Fetch Claims for Reporter
+  // Fetch Submitted Claims for Case Owner / Admin
   const fetchClaims = useCallback(async () => {
-    if (!isAuthenticated || !isOwner) return
+    if (!isAuthenticated || !canManage) return
     setClaimsLoading(true)
     try {
       const { data } = await api.get(`/api/claims/item/${id}`)
@@ -84,48 +123,63 @@ export default function ItemDetail() {
     } finally {
       setClaimsLoading(false)
     }
-  }, [id, isAuthenticated, isOwner])
+  }, [id, isAuthenticated, canManage])
 
   useEffect(() => {
-    if (isOwner) {
+    if (canManage) {
       // eslint-disable-next-line react/set-state-in-effect
       fetchClaims()
     }
-  }, [isOwner, fetchClaims])
+  }, [canManage, fetchClaims])
 
-  // Chat initialization
+  // Chat Setup & Initialization
+  const initChatForTarget = useCallback(async (targetRecipientId) => {
+    if (!isAuthenticated || !item) return
+    try {
+      const { data } = await api.post('/api/chat/conversations', {
+        itemId: item._id,
+        recipientId: targetRecipientId
+      })
+
+      if (data.success && data.conversation) {
+        setConversation(data.conversation)
+        const msgRes = await api.get(`/api/chat/conversations/${data.conversation._id}/messages`)
+        if (msgRes.data.success) {
+          setMessages(msgRes.data.messages || [])
+        }
+      }
+    } catch (err) {
+      console.error('Chat load error:', err)
+    }
+  }, [isAuthenticated, item])
+
   useEffect(() => {
     if (!isAuthenticated || !item) return
 
-    const initChat = async () => {
+    const loadChat = async () => {
       try {
-        const reporter = item.reportedBy || item.reporterId
-        const recipientId = typeof reporter === 'object' ? reporter?._id : reporter
-
-        if (!isOwner) {
-          if (!recipientId) return
-          const { data } = await api.post('/api/chat/conversations', {
-            itemId: item._id,
-            recipientId
-          })
-
-          if (data.success && data.conversation) {
-            setConversation(data.conversation)
-            const msgRes = await api.get(`/api/chat/conversations/${data.conversation._id}/messages`)
-            if (msgRes.data.success) {
-              setMessages(msgRes.data.messages || [])
-            }
+        if (!canManage) {
+          // Normal user chats with the reporter
+          const target = item.reportedBy || item.reporterId
+          const repId = typeof target === 'object' ? target?._id : target
+          if (repId) {
+            initChatForTarget(repId)
           }
         } else {
+          // Reporter sees all threads for this case
           const { data } = await api.get('/api/chat/conversations')
-          if (data.success) {
-            const itemConvos = (data.conversations || []).filter(
+          if (data.success && Array.isArray(data.conversations)) {
+            const itemConvos = data.conversations.filter(
               (c) => (c.item?._id || c.item) === item._id
             )
-            setConversations(itemConvos)
+            setConversationsList(itemConvos)
             if (itemConvos.length > 0) {
-              setConversation(itemConvos[0])
-              const msgRes = await api.get(`/api/chat/conversations/${itemConvos[0]._id}/messages`)
+              const selectedConvo = activeChatRecipientId
+                ? itemConvos.find((c) => c.participants.some((p) => (p._id || p) === activeChatRecipientId)) || itemConvos[0]
+                : itemConvos[0]
+
+              setConversation(selectedConvo)
+              const msgRes = await api.get(`/api/chat/conversations/${selectedConvo._id}/messages`)
               if (msgRes.data.success) {
                 setMessages(msgRes.data.messages || [])
               }
@@ -133,20 +187,22 @@ export default function ItemDetail() {
           }
         }
       } catch (err) {
-        console.error('Chat init error:', err)
+        console.error('Initial chat load failed:', err)
       }
     }
 
-    initChat()
-  }, [item, isAuthenticated, isOwner])
+    loadChat()
+  }, [item, isAuthenticated, canManage, activeChatRecipientId, initChatForTarget])
 
-  // Socket room join
+  // Real-Time Socket Connection & Event Handling
   useEffect(() => {
-    if (!socket || !conversation) return
+    if (!socket || !conversation?._id) return
+
     socket.emit('join_conversation', conversation._id)
 
     const handleNewMessage = (msg) => {
-      if (msg.conversationId === conversation._id) {
+      const msgConvId = msg.conversationId || (msg.conversation?._id || msg.conversation)
+      if (msgConvId && conversation._id && msgConvId.toString() === conversation._id.toString()) {
         setMessages((prev) => {
           if (prev.some((m) => m._id === msg._id)) return prev
           return [...prev, msg]
@@ -168,17 +224,275 @@ export default function ItemDetail() {
     return () => {
       socket.off('new_message', handleNewMessage)
       socket.off('user_typing', handleTyping)
+      socket.emit('leave_conversation', conversation._id)
     }
   }, [socket, conversation])
 
-  // Scroll to bottom of messages
+  // Scroll to Bottom of Chat
   useEffect(() => {
     if (chatOpen) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
     }
   }, [messages, chatOpen])
 
-  // Handle Send Message
+  // Copy Case ID to Clipboard
+  const handleCopyCaseId = (e) => {
+    e.stopPropagation()
+    const idToCopy = item?._id || id
+    navigator.clipboard.writeText(idToCopy)
+    toast.success('Case Reference ID copied to clipboard!')
+  }
+
+  // Quick Trigger AI Recovery Assistant with Case Context
+  const handleOpenAiAssistant = () => {
+    const event = new CustomEvent('open-rag-assistant', {
+      detail: {
+        caseContext: {
+          itemId: item._id,
+          title: item.title,
+          type: item.type || item.itemType,
+          category: item.category,
+          status: item.status,
+          location: formatLocation(item.location),
+          description: item.description
+        }
+      }
+    })
+    window.dispatchEvent(event)
+  }
+
+  // Submit Ownership Claim (Claimant)
+  const handleSubmitClaim = async (e) => {
+    e.preventDefault()
+    if (!isAuthenticated) {
+      toast.error('Please sign in to submit an ownership claim.')
+      navigate('/login')
+      return
+    }
+
+    if (!proofDetails.trim()) {
+      toast.error('Please describe your proof of ownership in detail.')
+      return
+    }
+
+    setSubmittingClaim(true)
+    try {
+      const fd = new FormData()
+      let combinedProof = proofDetails.trim()
+      if (serialProof.trim()) {
+        combinedProof += `\n[Documented Serial / Secret Identification]: ${serialProof.trim()}`
+      }
+      fd.append('proofDetails', combinedProof)
+      if (proofFile) {
+        fd.append('proofImage', proofFile)
+      }
+
+      const { data } = await api.post(`/api/claims/item/${id}`, fd, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+
+      if (data.success) {
+        toast.success('Ownership claim submitted successfully! The reporter will review your proof.')
+        setClaimModalOpen(false)
+        setProofDetails('')
+        setSerialProof('')
+        setProofFile(null)
+        setProofPreview(null)
+        fetchItem()
+      } else {
+        throw new Error(data.message || 'Claim submission failed')
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.message || err.message || 'Error submitting claim')
+    } finally {
+      setSubmittingClaim(false)
+    }
+  }
+
+  // Approve Claim (Reporter / Admin)
+  const handleApproveClaimConfirm = async () => {
+    if (!actionClaim) return
+    setActioningClaim(true)
+    try {
+      const { data } = await api.patch(`/api/claims/${actionClaim._id}/resolve`, {
+        status: 'approved',
+        reason: decisionReason.trim()
+      })
+      if (data.success) {
+        toast.success('Ownership claim approved! Handover coordination can now begin.')
+        setApproveModalOpen(false)
+        setActionClaim(null)
+        setDecisionReason('')
+        fetchClaims()
+        fetchItem()
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to approve claim')
+    } finally {
+      setActioningClaim(false)
+    }
+  }
+
+  // Reject Claim (Reporter / Admin)
+  const handleRejectClaimConfirm = async () => {
+    if (!actionClaim) return
+    setActioningClaim(true)
+    try {
+      const { data } = await api.patch(`/api/claims/${actionClaim._id}/resolve`, {
+        status: 'rejected',
+        reason: decisionReason.trim() || 'Ownership verification criteria not satisfied.'
+      })
+      if (data.success) {
+        toast.success('Claim has been rejected.')
+        setRejectModalOpen(false)
+        setActionClaim(null)
+        setDecisionReason('')
+        fetchClaims()
+        fetchItem()
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to reject claim')
+    } finally {
+      setActioningClaim(false)
+    }
+  }
+
+  // Request More Information (Reporter / Admin)
+  const handleRequestInfoConfirm = async () => {
+    if (!actionClaim || !infoRequestMessage.trim()) {
+      toast.error('Please specify what additional information is needed.')
+      return
+    }
+    setActioningClaim(true)
+    try {
+      const { data } = await api.post(`/api/claims/${actionClaim._id}/request-info`, {
+        message: infoRequestMessage.trim()
+      })
+      if (data.success) {
+        toast.success('Information request sent to claimant.')
+        setRequestInfoModalOpen(false)
+        setActionClaim(null)
+        setInfoRequestMessage('')
+        fetchClaims()
+        fetchItem()
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to send information request')
+    } finally {
+      setActioningClaim(false)
+    }
+  }
+
+  // Claimant Responds to Info Request
+  const handleRespondToInfoSubmit = async (e) => {
+    e.preventDefault()
+    const targetClaim = item?.userClaim
+    if (!targetClaim || !claimantResponseText.trim()) {
+      toast.error('Please write your response details.')
+      return
+    }
+    setSubmittingResponse(true)
+    try {
+      const { data } = await api.post(`/api/claims/${targetClaim._id}/respond`, {
+        response: claimantResponseText.trim()
+      })
+      if (data.success) {
+        toast.success('Additional details submitted for review!')
+        setRespondModalOpen(false)
+        setClaimantResponseText('')
+        fetchItem()
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to submit response')
+    } finally {
+      setSubmittingResponse(false)
+    }
+  }
+
+  // Confirm Handover (Reporter / Admin)
+  const handleConfirmHandoverSubmit = async (e) => {
+    e.preventDefault()
+    setSubmittingHandover(true)
+    try {
+      const { data } = await api.post(`/api/items/${id}/handover`, {
+        notes: handoverNotes.trim()
+      })
+      if (data.success) {
+        toast.success('Item safely returned! Case updated to Successfully Reunited.')
+        setHandoverModalOpen(false)
+        setHandoverNotes('')
+        fetchItem()
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to record handover')
+    } finally {
+      setSubmittingHandover(false)
+    }
+  }
+
+  // Close Case (Reporter / Admin)
+  const handleCloseCaseSubmit = async () => {
+    setSubmittingStatusChange(true)
+    try {
+      const { data } = await api.post(`/api/items/${id}/close`)
+      if (data.success) {
+        toast.success('Case closed and archived.')
+        setCloseCaseModalOpen(false)
+        fetchItem()
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to close case')
+    } finally {
+      setSubmittingStatusChange(false)
+    }
+  }
+
+  // Reopen Case (Reporter / Admin)
+  const handleReopenCaseSubmit = async () => {
+    setSubmittingStatusChange(true)
+    try {
+      const { data } = await api.post(`/api/items/${id}/reopen`)
+      if (data.success) {
+        toast.success('Case reopened and returned to active directory.')
+        setReopenCaseModalOpen(false)
+        fetchItem()
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to reopen case')
+    } finally {
+      setSubmittingStatusChange(false)
+    }
+  }
+
+  // Edit Case Details (Reporter / Admin)
+  const handleEditCaseSubmit = async (e) => {
+    e.preventDefault()
+    if (!editTitle.trim()) {
+      toast.error('Item title is required.')
+      return
+    }
+    setSavingEdit(true)
+    try {
+      const { data } = await api.patch(`/api/items/${id}`, {
+        title: editTitle.trim(),
+        description: editDescription.trim(),
+        category: editCategory,
+        subCategory: editSubCategory.trim(),
+        location: editLocation.trim()
+      })
+      if (data.success) {
+        toast.success('Case details updated successfully.')
+        setEditModalOpen(false)
+        fetchItem()
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to update case details')
+    } finally {
+      setSavingEdit(false)
+    }
+  }
+
+  // Send Chat Message
   const handleSendMessage = async (e) => {
     e.preventDefault()
     if (!msgText.trim() || !conversation) return
@@ -199,187 +513,245 @@ export default function ItemDetail() {
         })
       }
     } catch {
-      toast.error('Failed to dispatch message')
+      toast.error('Could not send message. Please try again.')
       setMsgText(textToSend)
     } finally {
       setSending(false)
     }
   }
 
-  // Handle Typing indicator
+  // Typing Broadcast Handler
   const handleMsgInputChange = (e) => {
     setMsgText(e.target.value)
     if (!socket || !conversation) return
 
-    socket.emit('typing', { conversationId: conversation._id, userName: user?.name })
+    socket.emit('typing', {
+      conversationId: conversation._id,
+      userName: user?.name || 'Someone',
+      isTyping: true
+    })
 
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
     typingTimeoutRef.current = setTimeout(() => {
+      socket.emit('typing', {
+        conversationId: conversation._id,
+        userName: user?.name,
+        isTyping: false
+      })
       socket.emit('stop_typing', { conversationId: conversation._id })
     }, 1500)
   }
 
-  // Submit Claim
-  const handleSubmitClaim = async (e) => {
-    e.preventDefault()
-    if (!isAuthenticated) {
-      toast.error('Please sign in to submit an ownership claim')
-      navigate('/login')
-      return
-    }
-
-    if (!proofDetails.trim()) {
-      toast.error('Please explain your proof of ownership')
-      return
-    }
-
-    setSubmittingClaim(true)
-    try {
-      const fd = new FormData()
-      let combinedProof = proofDetails.trim()
-      if (serialProof.trim()) {
-        combinedProof += ` [Documented Serial/Engraving: ${serialProof.trim()}]`
-      }
-      fd.append('proofDetails', combinedProof)
-      if (proofFile) {
-        fd.append('proofImage', proofFile)
-      }
-
-      const { data } = await api.post(`/api/claims/item/${id}`, fd, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      })
-
-      if (data.success) {
-        toast.success('Ownership claim registered under municipal review')
-        setClaimModalOpen(false)
-        setProofDetails('')
-        setSerialProof('')
-        setProofFile(null)
-        setProofPreview(null)
-        fetchItem()
-      } else {
-        throw new Error(data.message || 'Claim submission failed')
-      }
-    } catch (err) {
-      toast.error(err.response?.data?.message || err.message || 'Error submitting claim')
-    } finally {
-      setSubmittingClaim(false)
-    }
-  }
-
-  // Approve / Reject Claim (Owner action)
-  const handleClaimStatusAction = async (claimId, newStatus) => {
-    setActioningClaimId(claimId)
-    try {
-      const { data } = await api.patch(`/api/claims/${claimId}/status`, { status: newStatus })
-      if (data.success) {
-        toast.success(`Claim marked as ${newStatus}`)
-        fetchClaims()
-        fetchItem()
-      }
-    } catch (err) {
-      toast.error(err.response?.data?.message || 'Error updating claim status')
-    } finally {
-      setActioningClaimId(null)
-    }
-  }
-
-  // Mark item as Resolved
-  const handleResolveItem = async () => {
-    try {
-      const { data } = await api.patch(`/api/items/${id}/status`, { status: 'Resolved' })
-      if (data.success) {
-        toast.success('Case marked as Resolved & Reunited!')
-        fetchItem()
-      }
-    } catch (err) {
-      toast.error(err.response?.data?.message || 'Error resolving item')
-    }
+  // Start chat with a specific claimant (Reporter action)
+  const handleChatWithClaimant = (claimantUser) => {
+    if (!claimantUser?._id) return
+    setActiveChatRecipientId(claimantUser._id)
+    setChatOpen(true)
+    initChatForTarget(claimantUser._id)
   }
 
   if (loading) {
     return (
       <div className="py-24 text-center">
-        <div className="w-12 h-12 rounded-full bg-surface-container border-2 border-primary border-t-transparent animate-spin mx-auto mb-3"></div>
-        <p className="text-body-sm font-body-sm text-on-surface-variant">Opening municipal case dossier...</p>
+        <div className="w-12 h-12 rounded-full border-3 border-primary border-t-transparent animate-spin mx-auto mb-4" />
+        <p className="text-body-md font-medium text-primary">Loading case file from HavenFind registry...</p>
+        <p className="text-body-sm text-on-surface-variant mt-1">Verifying custody status and secure records</p>
       </div>
     )
   }
 
   if (!item) return null
 
-  const caseId = (item._id || '').slice(-4).toUpperCase()
+  const caseId = (item._id || '').slice(-6).toUpperCase()
   const itemType = (item.type || item.itemType || 'found').toLowerCase()
-  const DEFAULT_IMAGE_PLACEHOLDER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='600' viewBox='0 0 800 600' fill='none'%3E%3Crect width='800' height='600' fill='%23F1F5F9'/%3E%3Ccircle cx='400' cy='280' r='50' stroke='%2394A3B8' stroke-width='4'/%3E%3Ctext x='400' y='380' font-family='system-ui, sans-serif' font-size='18' font-weight='500' fill='%2364748B' text-anchor='middle'%3ENo Incident Photo Filed%3C/text%3E%3C/svg%3E"
-  const allImages = item.images && item.images.length > 0 ? item.images : (item.imageUrl ? [item.imageUrl] : [DEFAULT_IMAGE_PLACEHOLDER])
+  const isFound = itemType === 'found'
+
+  const DEFAULT_IMAGE_PLACEHOLDER =
+    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='600' viewBox='0 0 800 600' fill='none'%3E%3Crect width='800' height='600' fill='%23F1F5F9'/%3E%3Ccircle cx='400' cy='280' r='50' stroke='%2394A3B8' stroke-width='4'/%3E%3Ctext x='400' y='380' font-family='system-ui, sans-serif' font-size='18' font-weight='500' fill='%2364748B' text-anchor='middle'%3ENo Item Photo Provided%3C/text%3E%3C/svg%3E"
+  const allImages = item.images && item.images.length > 0 ? item.images : item.imageUrl ? [item.imageUrl] : [DEFAULT_IMAGE_PLACEHOLDER]
   const activeImage = allImages[activeImageIndex] || allImages[0]
-  const reporterName = item.reportedBy?.name || item.reporterId?.name || 'Verified Civic Custodian'
+  const reporterData = item.reportedBy || item.reporterId || {}
+  const reporterName = reporterData.name || 'Verified Citizen'
+  const userClaim = item.userClaim
+
+  // Recovery Progress Milestone calculation
+  const isClaimSubmitted = ['Pending Claim', 'Handover Pending', 'Resolved', 'Closed'].includes(item.status) || claims.length > 0 || Boolean(userClaim)
+  const isClaimApproved = ['Handover Pending', 'Resolved', 'Closed'].includes(item.status) || claims.some((c) => c.status === 'approved')
+  const isHandoverDone = ['Resolved', 'Closed'].includes(item.status)
+  const isCaseClosed = item.status === 'Closed'
+
+  const milestones = [
+    {
+      id: 'reported',
+      label: 'Item Reported',
+      sublabel: `Logged by ${reporterName}`,
+      date: item.createdAt || item.date,
+      completed: true,
+      current: item.status === 'Active'
+    },
+    {
+      id: 'claim_submitted',
+      label: 'Claim Submitted',
+      sublabel: claims.length > 0 ? `${claims.length} claim(s) on record` : (userClaim ? 'Your claim logged' : 'Waiting for owner proof'),
+      date: item.statusHistory?.find((h) => h.status === 'Pending Claim')?.changedAt || (claims[0]?.createdAt),
+      completed: isClaimSubmitted,
+      current: item.status === 'Pending Claim'
+    },
+    {
+      id: 'claim_verified',
+      label: 'Claim Verified & Approved',
+      sublabel: isClaimApproved ? 'Proof verified by reporter' : 'Awaiting reviewer check',
+      date: item.statusHistory?.find((h) => h.status === 'Handover Pending')?.changedAt,
+      completed: isClaimApproved,
+      current: item.status === 'Handover Pending'
+    },
+    {
+      id: 'handover',
+      label: 'Item Reunited',
+      sublabel: isHandoverDone ? (item.handover?.notes || 'Returned to rightful owner') : 'Handover coordination',
+      date: item.handover?.completedAt || item.statusHistory?.find((h) => h.status === 'Resolved')?.changedAt,
+      completed: isHandoverDone,
+      current: item.status === 'Resolved' && !isCaseClosed
+    },
+    {
+      id: 'closed',
+      label: 'Case Concluded',
+      sublabel: isCaseClosed ? 'Archived in municipal ledger' : 'Final registry closure',
+      date: item.statusHistory?.find((h) => h.status === 'Closed')?.changedAt,
+      completed: isCaseClosed,
+      current: isCaseClosed
+    }
+  ]
+
+  // Plain English Recovery Summary derivation
+  const getPlainEnglishSummary = () => {
+    if (isCaseClosed) {
+      return {
+        headline: 'Case Successfully Concluded',
+        body: `This ${item.title} was recovered, verified, and safely returned to its owner. The case is now closed.`,
+        actionNeeded: 'No further action required.',
+        actionBy: 'Registry Completed'
+      }
+    }
+    if (isHandoverDone) {
+      return {
+        headline: 'Item Successfully Reunited!',
+        body: `The item has been returned to its verified owner. ${item.handover?.notes ? `Note: "${item.handover.notes}"` : ''}`,
+        actionNeeded: canManage ? 'Case can now be officially closed and archived.' : 'No further action needed.',
+        actionBy: canManage ? 'Reporter' : 'Complete'
+      }
+    }
+    if (item.status === 'Handover Pending') {
+      return {
+        headline: 'Ownership Verified – Ready for Handover',
+        body: 'The ownership claim was approved. The reporter and owner need to coordinate safe in-person collection.',
+        actionNeeded: 'Use the Secure Messenger below to arrange handover at a safe public location.',
+        actionBy: isOwner ? 'Both Reporter & Claimant' : 'Both Parties'
+      }
+    }
+    if (item.status === 'Pending Claim') {
+      return {
+        headline: 'Claim Submitted – Verification Underway',
+        body: canManage
+          ? `You have ${claims.length || 1} claim(s) awaiting your review. Check the evidence and approve or request more details.`
+          : 'Your claim has been submitted. The reporter is reviewing your submitted evidence.',
+        actionNeeded: canManage ? 'Review the submitted claim evidence below.' : 'Wait for reporter response.',
+        actionBy: canManage ? 'Reporter' : 'Claimant'
+      }
+    }
+    return {
+      headline: isFound ? 'Found Property Awaiting Owner' : 'Lost Item Looking for Match',
+      body: isFound
+        ? 'This item was safely turned in and recorded. If you are the owner, submit a verification claim with proof.'
+        : 'This item was reported lost. If you have seen or recovered it, contact the owner or report it found.',
+      actionNeeded: isFound ? 'Submit an ownership claim with identifying details.' : 'Report a sighting or match.',
+      actionBy: 'Community / Rightful Owner'
+    }
+  }
+
+  const recoverySummary = getPlainEnglishSummary()
 
   return (
-    <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 md:px-12 py-6">
-      {/* Breadcrumb Navigation */}
-      <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-body-sm font-body-sm text-on-surface-variant mb-6">
-        <Link to="/" className="hover:text-primary transition-colors flex items-center gap-1">
-          <span className="material-symbols-outlined text-body-sm">home</span>
-          <span>Home</span>
-        </Link>
-        <span className="material-symbols-outlined text-body-sm text-outline-variant">chevron_right</span>
-        <span className="hover:text-primary transition-colors">{item.category || 'General'}</span>
-        <span className="material-symbols-outlined text-body-sm text-outline-variant">chevron_right</span>
-        <span className="text-on-surface font-semibold truncate max-w-xs md:max-w-md">
-          {item.title} (Case #{caseId})
-        </span>
-      </nav>
+    <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 md:px-12 py-6 space-y-8">
+      {/* ── TOP BREADCRUMB & CASE REFERENCE BAR ──────────────────────────── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-outline-variant">
+        <div className="flex items-center gap-2 text-body-sm text-on-surface-variant flex-wrap">
+          <Link
+            to="/"
+            className="inline-flex items-center gap-1.5 font-medium text-primary hover:text-secondary transition-colors"
+          >
+            <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+            <span>Back to Directory</span>
+          </Link>
+          <span className="text-outline">/</span>
+          <span className="capitalize">{item.category || 'General'}</span>
+          <span className="text-outline">/</span>
+          <span className="font-semibold text-primary truncate max-w-[220px] sm:max-w-md">{item.title}</span>
+        </div>
 
-      {/* Two-Column Item Detail Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        {/* LEFT COLUMN: Image Gallery & AI Diagnostics (5 cols) */}
-        <section className="lg:col-span-6 xl:col-span-5 flex flex-col gap-5">
-          {/* Primary Image Display Card */}
-          <div className="bg-surface-container-lowest rounded-2xl border border-outline-variant/60 shadow-xs overflow-hidden relative group">
-            {/* Status Badges Overlay */}
-            <div className="absolute top-4 left-4 z-10 flex flex-wrap gap-2">
-              <StatusBadge status={item.status} type={itemType} />
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-label-sm font-label-sm bg-surface-container-lowest/90 backdrop-blur-md text-primary font-semibold border border-outline-variant/50 shadow-xs">
-                <span className="material-symbols-outlined text-label-sm">inventory_2</span>
-                Lockbox #{caseId}
-              </span>
-            </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleCopyCaseId}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-surface-container border border-outline-variant hover:border-primary text-primary text-body-sm font-semibold transition-all shadow-2xs"
+            title="Click to copy full Case ID"
+          >
+            <span className="material-symbols-outlined text-[16px] text-secondary">fingerprint</span>
+            <span>Case #{caseId}</span>
+            <span className="material-symbols-outlined text-[14px] text-outline">content_copy</span>
+          </button>
 
-            {/* Main Image Asset */}
-            <div className="aspect-[4/3] w-full bg-surface-container-low overflow-hidden relative">
+          <button
+            type="button"
+            onClick={handleOpenAiAssistant}
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-secondary text-on-secondary text-body-sm font-semibold hover:bg-on-secondary-container transition-all shadow-2xs"
+            title="Ask the AI Assistant about this recovery case"
+          >
+            <span className="material-symbols-outlined text-[16px]">psychology</span>
+            <span>Ask AI</span>
+          </button>
+        </div>
+      </div>
+
+      {/* ── SECTION A: CASE OVERVIEW HERO ─────────────────────────────────── */}
+      <section className="bg-surface-container-lowest rounded-3xl border border-outline-variant p-6 sm:p-8 shadow-xs overflow-hidden relative">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          {/* Item Image Gallery (5 Cols) */}
+          <div className="lg:col-span-5 flex flex-col gap-3">
+            <div
+              onClick={() => setInspectModal(true)}
+              className="relative aspect-4/3 w-full bg-surface-container rounded-2xl overflow-hidden border border-outline-variant cursor-zoom-in group shadow-xs"
+            >
               <img
                 src={activeImage}
                 alt={item.title}
-                className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
               />
-              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-primary/75 via-primary/20 to-transparent p-4 flex items-end justify-between">
-                <div className="text-on-primary">
-                  <p className="text-label-sm font-label-sm opacity-80">Municipal Catalog Asset</p>
-                  <p className="text-body-sm font-body-sm font-medium truncate max-w-xs">
-                    Case #{caseId} photographic documentation
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setInspectModal(true)}
-                  className="bg-surface-container-lowest/90 hover:bg-surface-container-lowest text-primary text-label-sm font-label-sm px-2.5 py-1 rounded-lg flex items-center gap-1 backdrop-blur-md font-semibold transition-colors"
-                >
-                  <span className="material-symbols-outlined text-body-sm">zoom_in</span>
-                  <span>Inspect 4K</span>
-                </button>
+              <div className="absolute top-3 left-3 flex flex-wrap gap-2">
+                <span className={`px-2.5 py-1 rounded-full text-label-sm font-bold uppercase shadow-xs ${
+                  isFound
+                    ? 'bg-secondary text-on-secondary'
+                    : 'bg-primary text-on-primary'
+                }`}>
+                  {isFound ? 'Found Property' : 'Lost Item Report'}
+                </span>
+              </div>
+              <div className="absolute bottom-3 right-3 bg-surface-container-lowest/90 backdrop-blur-md px-2.5 py-1 rounded-lg text-primary text-label-sm font-semibold flex items-center gap-1 border border-outline-variant">
+                <span className="material-symbols-outlined text-[16px]">zoom_in</span>
+                <span>Enlarge</span>
               </div>
             </div>
 
-            {/* Thumbnail Angles Strip */}
+            {/* Thumbnail angles (if multiple) */}
             {allImages.length > 1 && (
-              <div className="p-4 flex gap-3 overflow-x-auto bg-surface-container-lowest border-t border-outline-variant/40 custom-scrollbar">
+              <div className="flex gap-2 overflow-x-auto pb-1">
                 {allImages.map((img, idx) => (
                   <button
                     key={idx}
+                    type="button"
                     onClick={() => setActiveImageIndex(idx)}
-                    className={`aspect-square w-16 rounded-xl border-2 overflow-hidden flex-shrink-0 transition-all ${
-                      activeImageIndex === idx ? 'border-primary shadow-xs' : 'border-outline-variant hover:border-primary/50'
+                    className={`w-16 h-16 rounded-xl overflow-hidden border-2 flex-shrink-0 transition-all ${
+                      activeImageIndex === idx ? 'border-primary ring-2 ring-primary/20' : 'border-outline-variant opacity-70 hover:opacity-100'
                     }`}
                   >
                     <img src={img} alt={`Angle ${idx + 1}`} className="w-full h-full object-cover" />
@@ -389,487 +761,711 @@ export default function ItemDetail() {
             )}
           </div>
 
-          {/* AI Visual Match & Forensic Diagnostics Widget */}
-          <div className="bg-surface-container-lowest rounded-2xl p-5 border border-outline-variant/60 shadow-xs flex flex-col gap-3.5">
-            <div className="flex items-center justify-between">
-              <h3 className="text-body-md font-body-md font-bold text-primary flex items-center gap-2">
-                <span className="material-symbols-outlined text-secondary text-[20px]">auto_awesome</span>
-                <span>AI Visual &amp; Registry Diagnostics</span>
-              </h3>
-              <span className="font-label-sm text-label-sm px-2 py-0.5 rounded bg-surface-container-high text-primary font-semibold">
-                Engine v4.2
-              </span>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 rounded-xl bg-surface-container-low border border-outline-variant/50">
-                <div className="flex items-center justify-between text-label-sm font-label-sm text-on-surface-variant mb-1">
-                  <span>Visual Confidence</span>
-                  <span className="text-secondary font-bold font-label-md text-label-md">96.4%</span>
-                </div>
-                <div className="w-full bg-outline-variant/40 h-1.5 rounded-full overflow-hidden">
-                  <div className="bg-secondary h-full rounded-full" style={{ width: '96%' }}></div>
-                </div>
-                <p className="text-[11px] text-on-surface-variant mt-1.5 leading-snug">
-                  Chassis and color features verified via 512-D local CLIP embeddings
-                </p>
-              </div>
-
-              <div className="p-3 rounded-xl bg-surface-container-low border border-outline-variant/50">
-                <div className="flex items-center justify-between text-label-sm font-label-sm text-on-surface-variant mb-1">
-                  <span>Hardware Hash</span>
-                  <span className="text-secondary font-bold font-label-md text-label-md">Verified</span>
-                </div>
-                <div className="w-full bg-outline-variant/40 h-1.5 rounded-full overflow-hidden">
-                  <div className="bg-secondary h-full rounded-full" style={{ width: '100%' }}></div>
-                </div>
-                <p className="text-[11px] text-on-surface-variant mt-1.5 leading-snug">
-                  Tamper-evident chain of custody logged under Case #{caseId}
-                </p>
-              </div>
-            </div>
-
-            {/* Custody Notice */}
-            <div className="flex items-start gap-2.5 p-3 rounded-xl bg-surface-container-lowest border border-outline-variant/40 text-body-sm">
-              <span className="material-symbols-outlined text-secondary text-body-lg shrink-0 mt-0.5">shield</span>
-              <div>
-                <p className="text-primary font-semibold text-body-sm">Tamper-Evident Bag #T-{caseId}88</p>
-                <p className="text-on-surface-variant text-body-sm">
-                  Physical property is preserved under municipal security protocols. Retrieval requires government identity verification.
-                </p>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* RIGHT COLUMN: Metadata, Case History, Actions & Custody Details (7 cols) */}
-        <section className="lg:col-span-6 xl:col-span-7 flex flex-col gap-5">
-          <div className="bg-surface-container-lowest rounded-2xl p-6 border border-outline-variant/60 shadow-xs flex flex-col gap-6">
-            {/* Top Title & Case Identifier Header */}
+          {/* Item Meta & Descriptions (7 Cols) */}
+          <div className="lg:col-span-7 flex flex-col justify-between h-full space-y-6">
             <div>
-              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                <div className="flex items-center gap-2">
-                  <span className="px-2.5 py-0.5 rounded text-label-sm font-label-sm bg-surface-container-high text-primary font-semibold uppercase">
-                    {item.category || 'General Incident'}
-                  </span>
-                  <span className="text-on-surface-variant text-label-sm font-label-sm">Case Registry ID:</span>
-                  <span className="text-primary font-semibold font-label-md text-label-md">#{caseId}</span>
-                </div>
-                <div className="flex items-center gap-1.5 text-on-surface-variant text-label-sm font-label-sm">
-                  <span className="material-symbols-outlined text-body-sm text-secondary">schedule</span>
-                  <span>{new Date(item.createdAt || item.date).toLocaleDateString()}</span>
-                </div>
+              {/* Status Header */}
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                <StatusBadge status={item.status} type={itemType} />
+                <span className="text-body-sm text-outline flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[16px]">calendar_today</span>
+                  <span>Reported {new Date(item.createdAt || item.date).toLocaleDateString()}</span>
+                </span>
               </div>
 
               <h1 className="text-headline-lg font-headline-lg font-bold text-primary tracking-tight">
                 {item.title}
               </h1>
-              <p className="text-body-md font-body-md text-on-surface-variant mt-2 leading-relaxed">
-                {item.description || 'Turned into municipal custody. Case file includes verified physical characteristics.'}
+
+              <p className="text-body-md font-body-md text-on-surface-variant mt-3 leading-relaxed whitespace-pre-line">
+                {item.description || 'No detailed public notes provided for this property.'}
               </p>
             </div>
 
-            {/* Key Metadata Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 rounded-xl bg-surface-container-low/70 border border-outline-variant/50">
+            {/* Details Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 p-4 rounded-2xl bg-surface-container-low border border-outline-variant/60">
               <div className="flex items-start gap-3">
-                <span className="w-9 h-9 rounded-lg bg-surface-container-lowest border border-outline-variant/50 flex items-center justify-center text-primary shrink-0">
-                  <span className="material-symbols-outlined text-body-lg">fmd_good</span>
-                </span>
-                <div>
-                  <p className="text-label-sm font-label-sm text-on-surface-variant">Recovery Geolocation</p>
-                  <p className="text-body-md font-body-md font-semibold text-primary">{formatLocation(item.location, 'Metropolitan Precinct')}</p>
+                <div className="w-10 h-10 rounded-xl bg-surface-container-lowest flex items-center justify-center text-secondary border border-outline-variant/60 shrink-0">
+                  <span className="material-symbols-outlined text-[20px]">location_on</span>
                 </div>
-              </div>
-
-              <div className="flex items-start gap-3">
-                <span className="w-9 h-9 rounded-lg bg-surface-container-lowest border border-outline-variant/50 flex items-center justify-center text-primary shrink-0">
-                  <span className="material-symbols-outlined text-body-lg">calendar_today</span>
-                </span>
                 <div>
-                  <p className="text-label-sm font-label-sm text-on-surface-variant">Incident Timestamp</p>
-                  <p className="text-body-md font-body-md font-semibold text-primary">
-                    {new Date(item.date || item.createdAt).toLocaleString()}
+                  <span className="text-label-sm font-semibold text-outline uppercase block">Discovery / Loss Area</span>
+                  <p className="text-body-md font-bold text-primary mt-0.5">
+                    {formatLocation(item.location, 'Metropolitan Area')}
                   </p>
                 </div>
               </div>
 
               <div className="flex items-start gap-3">
-                <span className="w-9 h-9 rounded-lg bg-surface-container-lowest border border-outline-variant/50 flex items-center justify-center text-primary shrink-0">
-                  <span className="material-symbols-outlined text-body-lg">badge</span>
-                </span>
+                <div className="w-10 h-10 rounded-xl bg-surface-container-lowest flex items-center justify-center text-primary border border-outline-variant/60 shrink-0">
+                  <span className="material-symbols-outlined text-[20px]">category</span>
+                </div>
                 <div>
-                  <p className="text-label-sm font-label-sm text-on-surface-variant">Intake Officer / Reporter</p>
-                  <div className="flex items-center gap-1.5">
-                    <p className="text-body-md font-body-md font-semibold text-primary">{reporterName}</p>
-                    <span className="material-symbols-outlined text-[15px] text-secondary">check_circle</span>
-                  </div>
+                  <span className="text-label-sm font-semibold text-outline uppercase block">Category</span>
+                  <p className="text-body-md font-bold text-primary mt-0.5">
+                    {item.category || 'General Item'} {item.subCategory ? `• ${item.subCategory}` : ''}
+                  </p>
                 </div>
               </div>
 
               <div className="flex items-start gap-3">
-                <span className="w-9 h-9 rounded-lg bg-surface-container-lowest border border-outline-variant/50 flex items-center justify-center text-primary shrink-0">
-                  <span className="material-symbols-outlined text-body-lg">lock</span>
-                </span>
+                <div className="w-10 h-10 rounded-xl bg-surface-container-lowest flex items-center justify-center text-primary border border-outline-variant/60 shrink-0">
+                  <span className="material-symbols-outlined text-[20px]">person</span>
+                </div>
                 <div>
-                  <p className="text-label-sm font-label-sm text-on-surface-variant">Physical Custody Facility</p>
-                  <p className="text-body-md font-body-md font-semibold text-primary">Lockbox #{caseId} · Central Depository</p>
+                  <span className="text-label-sm font-semibold text-outline uppercase block">Case Coordinator</span>
+                  <p className="text-body-md font-bold text-primary mt-0.5 flex items-center gap-1.5">
+                    <span>{reporterName}</span>
+                    {isOwner && (
+                      <span className="px-1.5 py-0.2 bg-secondary/10 text-secondary text-[11px] font-bold rounded">YOU</span>
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-surface-container-lowest flex items-center justify-center text-secondary border border-outline-variant/60 shrink-0">
+                  <span className="material-symbols-outlined text-[20px]">verified_user</span>
+                </div>
+                <div>
+                  <span className="text-label-sm font-semibold text-outline uppercase block">Custody Protocol</span>
+                  <p className="text-body-md font-bold text-primary mt-0.5">
+                    In-App Secure Handover
+                  </p>
                 </div>
               </div>
             </div>
 
-            {/* Distinguishing Features Checklist */}
-            <div className="flex flex-col gap-2.5">
-              <h3 className="text-body-md font-body-md font-bold text-primary">
-                Distinguishing Marks &amp; Verification Notes
-              </h3>
-              <div className="space-y-2">
-                <div className="flex items-center gap-3 p-2.5 rounded-xl border border-outline-variant/40 bg-surface-container-lowest">
-                  <span className="material-symbols-outlined text-secondary text-body-md">check</span>
-                  <span className="text-body-sm font-body-sm text-on-surface">
-                    <strong>Custody Verification:</strong> Documented in public records ledger under Case #{caseId}.
-                  </span>
-                </div>
-                <div className="flex items-center gap-3 p-2.5 rounded-xl border border-outline-variant/40 bg-surface-container-lowest">
-                  <span className="material-symbols-outlined text-secondary text-body-md">check</span>
-                  <span className="text-body-sm font-body-sm text-on-surface">
-                    <strong>Category Specifics:</strong> {item.category} filed with photographic evidence.
-                  </span>
-                </div>
-                {item.subCategory && (
-                  <div className="flex items-center gap-3 p-2.5 rounded-xl border border-outline-variant/40 bg-surface-container-lowest">
-                    <span className="material-symbols-outlined text-secondary text-body-md">check</span>
-                    <span className="text-body-sm font-body-sm text-on-surface">
-                      <strong>Sub-Category:</strong> {item.subCategory}
-                    </span>
-                  </div>
-                )}
-                {item.confidentialVerification && (
-                  <div className="flex items-start gap-3 p-3 rounded-xl border border-secondary/40 bg-secondary-container/20">
-                    <span className="material-symbols-outlined text-secondary text-body-md mt-0.5">lock</span>
-                    <span className="text-body-sm font-body-sm text-primary">
-                      <strong>Confidential Verification Clue (Private to Reporter):</strong> {item.confidentialVerification}
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
+            {/* Action Bar (Role & Status Sensitive) */}
+            <div className="flex flex-wrap items-center gap-3 pt-2">
+              {/* Claimant: Submit Claim if active & not reporter */}
+              {!canManage && !userClaim && item.status !== 'Resolved' && item.status !== 'Closed' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!isAuthenticated) {
+                      toast.info('Please sign in to submit your ownership claim.')
+                      navigate('/login')
+                      return
+                    }
+                    setClaimModalOpen(true)
+                  }}
+                  className="px-5 py-3 rounded-xl bg-primary hover:bg-primary-container text-on-primary font-bold text-body-md transition-all shadow-sm flex items-center gap-2 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-[20px]">verified</span>
+                  <span>This is My Item – Submit Claim</span>
+                </button>
+              )}
 
-            {/* Primary Action Buttons */}
-            <div className="pt-3 border-t border-outline-variant/50 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-              {isOwner ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={handleResolveItem}
-                    className="flex-1 py-3 px-5 rounded-xl bg-secondary hover:bg-on-secondary-container text-on-secondary font-semibold text-body-md active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-xs"
-                  >
-                    <span className="material-symbols-outlined text-[20px]">check_circle</span>
-                    <span>Mark as Reunited &amp; Close Case</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setChatOpen((v) => !v)}
-                    className="py-3 px-5 rounded-xl border-2 border-outline-variant hover:bg-surface-container text-primary font-semibold text-body-md active:scale-[0.98] transition-all flex items-center justify-center gap-2"
-                  >
-                    <span className="material-symbols-outlined text-[20px] text-secondary">chat</span>
-                    <span>{chatOpen ? 'Hide Messenger' : 'Open Messenger'}</span>
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setClaimModalOpen(true)}
-                    className="flex-1 py-3 px-5 rounded-xl bg-primary text-on-primary font-semibold text-body-md hover:bg-primary-container active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-sm"
-                  >
-                    <span className="material-symbols-outlined text-[20px] text-secondary-fixed">verified</span>
-                    <span>Claim This Item</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setChatOpen((v) => !v)}
-                    className="py-3 px-5 rounded-xl border-2 border-outline-variant hover:bg-surface-container text-primary font-semibold text-body-md active:scale-[0.98] transition-all flex items-center justify-center gap-2"
-                  >
-                    <span className="material-symbols-outlined text-[20px] text-secondary">encrypted</span>
-                    <span>{chatOpen ? 'Close Secure Chat' : 'Start Secure Chat'}</span>
-                  </button>
-                </>
+              {/* Chat with Reporter / Claimant */}
+              <button
+                type="button"
+                onClick={() => setChatOpen((v) => !v)}
+                className={`px-5 py-3 rounded-xl font-bold text-body-md transition-all shadow-sm flex items-center gap-2 cursor-pointer ${
+                  chatOpen
+                    ? 'bg-surface-container border border-outline-variant text-primary'
+                    : 'bg-secondary hover:bg-on-secondary-container text-on-secondary'
+                }`}
+              >
+                <span className="material-symbols-outlined text-[20px]">chat</span>
+                <span>{chatOpen ? 'Hide Case Messenger' : (canManage ? 'Open Case Messenger' : 'Chat with Reporter')}</span>
+              </button>
+
+              {/* Reporter Action: Edit Case Details */}
+              {canManage && item.status !== 'Resolved' && item.status !== 'Closed' && (
+                <button
+                  type="button"
+                  onClick={() => setEditModalOpen(true)}
+                  className="px-4 py-3 rounded-xl border border-outline-variant hover:border-primary text-primary font-semibold text-body-md transition-all bg-surface-container-lowest flex items-center gap-1.5"
+                >
+                  <span className="material-symbols-outlined text-[18px]">edit</span>
+                  <span>Edit Case</span>
+                </button>
+              )}
+
+              {/* Reporter Action: Record Handover & Mark Reunited */}
+              {canManage && (item.status === 'Handover Pending' || item.status === 'Active' || item.status === 'Pending Claim') && (
+                <button
+                  type="button"
+                  onClick={() => setHandoverModalOpen(true)}
+                  className="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-body-md transition-all shadow-sm flex items-center gap-1.5"
+                >
+                  <span className="material-symbols-outlined text-[20px]">handshake</span>
+                  <span>Confirm Handover / Mark Reunited</span>
+                </button>
+              )}
+
+              {/* View Recovery Record if Reunited / Closed */}
+              {(item.status === 'Resolved' || item.status === 'Closed') && (
+                <button
+                  type="button"
+                  onClick={() => setRecoveryRecordModalOpen(true)}
+                  className="px-4 py-3 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold text-body-md hover:bg-emerald-100 transition-all flex items-center gap-1.5"
+                >
+                  <span className="material-symbols-outlined text-[20px]">verified</span>
+                  <span>View Recovery Record</span>
+                </button>
+              )}
+
+              {/* Reporter Action: Close Case */}
+              {canManage && item.status === 'Resolved' && (
+                <button
+                  type="button"
+                  onClick={() => setCloseCaseModalOpen(true)}
+                  className="px-4 py-3 rounded-xl border border-outline-variant hover:border-primary text-primary font-semibold text-body-md transition-all bg-surface-container-lowest flex items-center gap-1.5"
+                >
+                  <span className="material-symbols-outlined text-[18px]">archive</span>
+                  <span>Close Case</span>
+                </button>
+              )}
+
+              {/* Reporter Action: Reopen Case */}
+              {canManage && (item.status === 'Resolved' || item.status === 'Closed') && (
+                <button
+                  type="button"
+                  onClick={() => setReopenCaseModalOpen(true)}
+                  className="px-4 py-3 rounded-xl border border-outline-variant hover:bg-surface-container text-on-surface-variant font-medium text-body-md transition-all flex items-center gap-1.5"
+                >
+                  <span className="material-symbols-outlined text-[18px]">restart_alt</span>
+                  <span>Reopen Case</span>
+                </button>
               )}
             </div>
-
-            {/* Claims Review Section */}
-            {isOwner ? (
-              <div className="bg-surface-container-low rounded-xl p-5 border border-outline-variant space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="material-symbols-outlined text-primary text-[22px]">assignment_turned_in</span>
-                    <h3 className="font-headline-sm text-headline-sm font-bold text-primary">
-                      Ownership Verification Claims ({claims.length})
-                    </h3>
-                  </div>
-                  {claimsLoading && <span className="text-label-sm font-label-sm text-outline">Refreshing...</span>}
-                </div>
-
-                {claims.length === 0 ? (
-                  <p className="text-body-sm font-body-sm text-on-surface-variant">
-                    No citizens have filed ownership claims for this case yet.
-                  </p>
-                ) : (
-                  <div className="space-y-3">
-                    {claims.map((cl) => {
-                      const claimantName = cl.claimant?.name || cl.claimantName || 'Citizen Claimant'
-                      return (
-                        <div key={cl._id} className="bg-surface-container-lowest rounded-xl p-4 border border-outline-variant space-y-3">
-                          <div className="flex items-start justify-between">
-                            <div>
-                              <p className="font-bold text-primary text-body-md">{claimantName}</p>
-                              <p className="text-label-sm font-label-sm text-outline">
-                                Filed: {new Date(cl.createdAt).toLocaleString()}
-                              </p>
-                            </div>
-                            <span className={`px-2.5 py-0.5 rounded-full text-label-sm font-label-sm font-semibold uppercase ${
-                              cl.status === 'approved'
-                                ? 'bg-secondary-container text-on-secondary-fixed-variant'
-                                : cl.status === 'rejected'
-                                ? 'bg-error-container text-on-error-container'
-                                : 'bg-tertiary-fixed text-on-tertiary-fixed-variant'
-                            }`}>
-                              {cl.status}
-                            </span>
-                          </div>
-
-                          <p className="text-body-sm font-body-sm text-on-surface-variant bg-surface-container p-3 rounded-lg">
-                            <strong>Claimant's Proof Statement:</strong> {cl.proofDetails}
-                          </p>
-
-                          {cl.proofImage && (
-                            <div className="w-24 h-24 rounded-lg overflow-hidden border border-outline-variant">
-                              <img src={cl.proofImage} alt="Claim Proof" className="w-full h-full object-cover" />
-                            </div>
-                          )}
-
-                          {cl.status === 'pending' && (
-                            <div className="flex items-center gap-2 pt-1">
-                              <button
-                                type="button"
-                                disabled={actioningClaimId === cl._id}
-                                onClick={() => handleClaimStatusAction(cl._id, 'approved')}
-                                className="px-3.5 py-1.5 rounded-lg bg-secondary hover:bg-on-secondary-container text-on-secondary font-semibold text-body-sm flex items-center gap-1 shadow-xs transition-colors"
-                              >
-                                <span className="material-symbols-outlined text-[16px]">check</span>
-                                <span>Approve &amp; Reclaim</span>
-                              </button>
-                              <button
-                                type="button"
-                                disabled={actioningClaimId === cl._id}
-                                onClick={() => handleClaimStatusAction(cl._id, 'rejected')}
-                                className="px-3.5 py-1.5 rounded-lg border border-outline-variant hover:bg-surface-container text-error font-semibold text-body-sm flex items-center gap-1 transition-colors"
-                              >
-                                <span className="material-symbols-outlined text-[16px]">close</span>
-                                <span>Decline</span>
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-            ) : (
-              /* Privacy-shielded public claim notice */
-              <div className="bg-surface-container-low/60 rounded-xl p-4 border border-outline-variant/40 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-on-tertiary-container animate-pulse"></span>
-                    <h4 className="text-body-md font-body-md font-semibold text-primary">
-                      Protected Ownership Claims Active
-                    </h4>
-                  </div>
-                  <span className="text-label-sm font-label-sm text-on-surface-variant">Cryptographically Sealed</span>
-                </div>
-                <div className="p-3 rounded-lg bg-surface-container-lowest border border-outline-variant/40 flex items-center justify-between relative overflow-hidden">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-7 h-7 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant font-label-sm text-label-sm font-bold">
-                      C1
-                    </div>
-                    <div>
-                      <div className="filter blur-[3px] select-none text-body-sm font-semibold text-primary">
-                        Claimant: Verification Active
-                      </div>
-                      <div className="text-[11px] text-on-surface-variant">Identity protected by municipal protocol</div>
-                    </div>
-                  </div>
-                  <span className="text-[11px] font-label-sm px-2 py-0.5 rounded bg-surface-container text-on-surface-variant">
-                    Reviewing
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {/* REAL-TIME CHAT MESSENGER ACCORDION / BOX */}
-            {chatOpen && (
-              <div className="bg-surface-container-lowest rounded-2xl border border-outline-variant shadow-lg overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
-                <div className="px-5 py-3.5 bg-primary text-on-primary flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <span className="material-symbols-outlined text-secondary-fixed text-[20px]">encrypted</span>
-                    <div>
-                      <h4 className="text-body-md font-bold leading-tight">Civic Encrypted Messenger</h4>
-                      <p className="text-[11px] text-inverse-primary">Case #{caseId} Direct Channel</p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setChatOpen(false)}
-                    className="text-inverse-primary hover:text-on-primary p-1"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">close</span>
-                  </button>
-                </div>
-
-                {/* Messages list */}
-                <div className="p-4 h-72 overflow-y-auto space-y-3 bg-surface-container-low custom-scrollbar">
-                  {messages.length === 0 ? (
-                    <div className="text-center py-12 text-on-surface-variant">
-                      <span className="material-symbols-outlined text-[32px] text-outline mb-1 block">chat_bubble_outline</span>
-                      <p className="text-body-sm font-medium">No messages in this case channel yet.</p>
-                      <p className="text-label-sm text-outline">Send a message to coordinate secure retrieval.</p>
-                    </div>
-                  ) : (
-                    messages.map((m) => {
-                      const isMe = (m.sender?._id || m.sender) === user?._id
-                      return (
-                        <div
-                          key={m._id}
-                          className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}
-                        >
-                          <div
-                            className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-body-sm ${
-                              isMe
-                                ? 'bg-primary text-on-primary rounded-br-none shadow-xs'
-                                : 'bg-surface-container-lowest text-primary border border-outline-variant rounded-bl-none shadow-xs'
-                            }`}
-                          >
-                            <p>{m.text}</p>
-                          </div>
-                          <span className="text-[10px] font-label-sm text-outline mt-1 px-1">
-                            {new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                        </div>
-                      )
-                    })
-                  )}
-                  {typingUser && (
-                    <p className="text-label-sm font-label-sm text-secondary animate-pulse">
-                      {typingUser} is typing...
-                    </p>
-                  )}
-                  <div ref={messagesEndRef} />
-                </div>
-
-                {/* Message Input Box */}
-                <form onSubmit={handleSendMessage} className="p-3 bg-surface-container-lowest border-t border-outline-variant flex gap-2">
-                  <input
-                    type="text"
-                    value={msgText}
-                    onChange={handleMsgInputChange}
-                    placeholder="Type coordination message..."
-                    className="flex-1 px-4 py-2 text-body-sm bg-surface rounded-xl border border-outline-variant focus:outline-none focus:ring-2 focus:ring-primary"
-                  />
-                  <button
-                    type="submit"
-                    disabled={sending || !msgText.trim()}
-                    className="px-4 py-2 bg-primary hover:bg-primary-container disabled:opacity-50 text-on-primary rounded-xl font-semibold text-body-sm flex items-center gap-1"
-                  >
-                    <span>Send</span>
-                    <span className="material-symbols-outlined text-[16px]">send</span>
-                  </button>
-                </form>
-              </div>
-            )}
-          </div>
-        </section>
-      </div>
-
-      {/* Trust & Safe Custody Civic Protocol Section */}
-      <section className="mt-12 bg-surface-container-lowest rounded-2xl p-8 border border-outline-variant/60 shadow-xs">
-        <div className="max-w-3xl mb-8">
-          <span className="px-2.5 py-1 rounded text-label-sm font-label-sm bg-secondary-container text-on-secondary-fixed-variant font-semibold uppercase">
-            HavenFind Assurance Framework
-          </span>
-          <h2 className="text-headline-md font-headline-md font-bold text-primary mt-2">
-            Civic Chain-of-Custody &amp; Safe Return Protocol
-          </h2>
-          <p className="text-body-md font-body-md text-on-surface-variant mt-1">
-            Every lost item reported across municipal hubs is governed by strict statutory custody protocols to prevent fraudulent transfers and safeguard personal data.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="p-5 rounded-xl bg-surface-container-low border border-outline-variant/40 flex flex-col gap-3">
-            <div className="w-10 h-10 rounded-lg bg-surface-container-lowest border border-outline-variant/60 flex items-center justify-center text-primary">
-              <span className="material-symbols-outlined text-headline-sm">fingerprint</span>
-            </div>
-            <h3 className="text-body-md font-body-md font-bold text-primary">1. Hardware Triangulation</h3>
-            <p className="text-body-sm font-body-sm text-on-surface-variant">
-              Serial identifiers, purchase receipts, or IMEI records are verified against encrypted manufacturer databases without exposing personal credentials.
-            </p>
-          </div>
-
-          <div className="p-5 rounded-xl bg-surface-container-low border border-outline-variant/40 flex flex-col gap-3">
-            <div className="w-10 h-10 rounded-lg bg-surface-container-lowest border border-outline-variant/60 flex items-center justify-center text-primary">
-              <span className="material-symbols-outlined text-headline-sm">verified_user</span>
-            </div>
-            <h3 className="text-body-md font-body-md font-bold text-primary">2. In-Person Handover</h3>
-            <p className="text-body-sm font-body-sm text-on-surface-variant">
-              Items are released strictly at authorized municipal transit kiosks. Claimants present photo ID and input unlock credentials on-site.
-            </p>
-          </div>
-
-          <div className="p-5 rounded-xl bg-surface-container-low border border-outline-variant/40 flex flex-col gap-3">
-            <div className="w-10 h-10 rounded-lg bg-surface-container-lowest border border-outline-variant/60 flex items-center justify-center text-primary">
-              <span className="material-symbols-outlined text-headline-sm">gavel</span>
-            </div>
-            <h3 className="text-body-md font-body-md font-bold text-primary">3. Zero-Fee Public Service</h3>
-            <p className="text-body-sm font-body-sm text-on-surface-variant">
-              Civic recovery under HavenFind is 100% free of charge. No finder fees, administrative storage charges, or hidden transactional costs.
-            </p>
           </div>
         </div>
       </section>
 
-      {/* SUBMIT OWNERSHIP CLAIM MODAL OVERLAY */}
-      {claimModalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto"
-          role="dialog"
-          aria-modal="true"
+      {/* ── SECTION D: PLAIN-ENGLISH RECOVERY SUMMARY ─────────────────────── */}
+      <section className="bg-surface-container-lowest rounded-2xl border border-outline-variant p-6 shadow-2xs relative overflow-hidden">
+        <div className="absolute top-0 left-0 bottom-0 w-2 bg-secondary" />
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <span className="text-label-sm font-bold text-secondary uppercase tracking-wider flex items-center gap-1">
+              <span className="material-symbols-outlined text-[16px]">info</span>
+              <span>Case Status Summary</span>
+            </span>
+            <h3 className="text-headline-sm font-bold text-primary">{recoverySummary.headline}</h3>
+            <p className="text-body-md text-on-surface-variant leading-relaxed max-w-3xl">
+              {recoverySummary.body}
+            </p>
+          </div>
+
+          <div className="p-4 rounded-xl bg-surface-container-low border border-outline-variant/60 shrink-0 space-y-1">
+            <span className="text-label-sm font-semibold text-outline uppercase block">Next Step</span>
+            <p className="text-body-sm font-bold text-primary">{recoverySummary.actionNeeded}</p>
+            <p className="text-[12px] text-on-surface-variant">Action required by: <strong className="text-primary">{recoverySummary.actionBy}</strong></p>
+          </div>
+        </div>
+      </section>
+
+      {/* ── SECTION B: RECOVERY PROGRESS TRACKER ──────────────────────────── */}
+      <section className="bg-surface-container-lowest rounded-3xl border border-outline-variant p-6 sm:p-8 shadow-xs space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-headline-md font-headline-md font-bold text-primary flex items-center gap-2">
+              <span className="material-symbols-outlined text-secondary text-[26px]">timeline</span>
+              <span>Recovery Progress Tracker</span>
+            </h2>
+            <p className="text-body-sm text-on-surface-variant mt-1">
+              Real-time milestone progression logged by verified timestamps in the municipal database.
+            </p>
+          </div>
+        </div>
+
+        {/* Timeline Steps Display */}
+        <div className="relative pt-4 pb-2">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-6 relative">
+            {milestones.map((m, idx) => {
+              const isLast = idx === milestones.length - 1
+              return (
+                <div key={m.id} className="relative flex md:flex-col items-start gap-3 md:gap-2">
+                  {/* Step Connector Line (Desktop) */}
+                  {!isLast && (
+                    <div
+                      className={`hidden md:block absolute top-4 left-8 right-0 h-1 z-0 ${
+                        m.completed ? 'bg-secondary' : 'bg-outline-variant'
+                      }`}
+                    />
+                  )}
+
+                  {/* Node Circle */}
+                  <div
+                    className={`relative z-10 w-8 h-8 rounded-full flex items-center justify-center font-bold text-body-sm shrink-0 transition-all ${
+                      m.completed
+                        ? 'bg-secondary text-on-secondary shadow-sm'
+                        : m.current
+                        ? 'bg-primary text-on-primary ring-4 ring-primary/20 animate-pulse'
+                        : 'bg-surface-container border border-outline-variant text-outline'
+                    }`}
+                  >
+                    {m.completed ? (
+                      <span className="material-symbols-outlined text-[18px]">check</span>
+                    ) : (
+                      <span>{idx + 1}</span>
+                    )}
+                  </div>
+
+                  {/* Step Labels */}
+                  <div className="flex-1">
+                    <h4 className={`text-body-md font-bold ${m.completed || m.current ? 'text-primary' : 'text-outline'}`}>
+                      {m.label}
+                    </h4>
+                    <p className="text-label-sm text-on-surface-variant mt-0.5">{m.sublabel}</p>
+                    {m.date && m.completed && (
+                      <p className="text-[11px] font-medium text-secondary mt-1">
+                        {new Date(m.date).toLocaleDateString()}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </section>
+
+      {/* ── SECTION C: OWNERSHIP VERIFICATION & CLAIMS ────────────────────── */}
+      <section className="bg-surface-container-lowest rounded-3xl border border-outline-variant p-6 sm:p-8 shadow-xs space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-outline-variant">
+          <div>
+            <h2 className="text-headline-md font-headline-md font-bold text-primary flex items-center gap-2">
+              <span className="material-symbols-outlined text-secondary text-[26px]">fact_check</span>
+              <span>Ownership Verification &amp; Evidence</span>
+            </h2>
+            <p className="text-body-sm text-on-surface-variant mt-1">
+              {canManage
+                ? 'Review proof submitted by community members claiming this property.'
+                : 'Ownership claims are verified against unique identifying marks before return.'}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="px-3 py-1 rounded-full bg-surface-container text-primary font-bold text-label-sm border border-outline-variant">
+              {canManage ? `${claims.length} Claim(s) Submitted` : (userClaim ? '1 Active Claim Filed by You' : 'No Claims Filed by You')}
+            </span>
+          </div>
+        </div>
+
+        {/* 1. Claimant View: Own claim status card */}
+        {!canManage && userClaim && (
+          <div className="p-6 rounded-2xl bg-surface-container-low border border-outline-variant space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <span className="text-label-sm font-bold text-outline uppercase block">YOUR SUBMITTED CLAIM</span>
+                <h3 className="text-headline-sm font-bold text-primary mt-0.5">
+                  Verification Status: <span className="capitalize">{userClaim.status.replace(/_/g, ' ')}</span>
+                </h3>
+                <p className="text-body-sm text-outline">
+                  Submitted on {new Date(userClaim.createdAt).toLocaleString()}
+                </p>
+              </div>
+
+              <span className={`px-3 py-1 rounded-full text-label-sm font-bold uppercase ${
+                userClaim.status === 'approved'
+                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                  : userClaim.status === 'rejected'
+                  ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                  : userClaim.status === 'info_requested'
+                  ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                  : 'bg-sky-100 text-sky-800 border border-sky-300'
+              }`}>
+                {userClaim.status.replace(/_/g, ' ')}
+              </span>
+            </div>
+
+            <div className="p-4 rounded-xl bg-surface-container-lowest border border-outline-variant/60 text-body-md text-primary">
+              <p className="text-label-sm font-semibold text-outline uppercase mb-1">Your Proof of Ownership:</p>
+              <p className="whitespace-pre-line">{userClaim.proofDetails}</p>
+            </div>
+
+            {userClaim.proofImage && (
+              <div>
+                <span className="text-label-sm font-semibold text-outline uppercase block mb-1.5">Submitted Evidence Document:</span>
+                <div
+                  onClick={() => {
+                    setActiveImageIndex(0)
+                    setInspectModal(true)
+                  }}
+                  className="w-32 h-32 rounded-xl overflow-hidden border border-outline-variant cursor-pointer"
+                >
+                  <img src={userClaim.proofImage} alt="Submitted Proof" className="w-full h-full object-cover" />
+                </div>
+              </div>
+            )}
+
+            {/* Information Requested Alert & Action */}
+            {userClaim.status === 'info_requested' && (
+              <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 space-y-2">
+                <div className="flex items-center gap-2 font-bold">
+                  <span className="material-symbols-outlined text-[20px]">help</span>
+                  <span>The Reporter has Requested Additional Information</span>
+                </div>
+                <p className="text-body-sm">{userClaim.infoRequestedMessage}</p>
+                <button
+                  type="button"
+                  onClick={() => setRespondModalOpen(true)}
+                  className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-body-sm transition-all"
+                >
+                  Provide Requested Details
+                </button>
+              </div>
+            )}
+
+            {/* Rejection notice */}
+            {userClaim.status === 'rejected' && userClaim.decisionReason && (
+              <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-900">
+                <p className="font-semibold text-body-sm">Reviewer Note: {userClaim.decisionReason}</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 2. Reporter / Admin View: Review all claims */}
+        {canManage && (
+          <div className="space-y-4">
+            {claimsLoading ? (
+              <div className="py-8 text-center text-on-surface-variant">
+                <div className="w-8 h-8 rounded-full border-2 border-primary border-t-transparent animate-spin mx-auto mb-2" />
+                <p className="text-body-sm">Fetching submitted claim dossiers...</p>
+              </div>
+            ) : claims.length === 0 ? (
+              <div className="p-8 rounded-2xl bg-surface-container-low border border-dashed border-outline-variant text-center space-y-2">
+                <span className="material-symbols-outlined text-[36px] text-outline block">inventory_2</span>
+                <h4 className="text-headline-sm font-bold text-primary">No Ownership Claims Filed Yet</h4>
+                <p className="text-body-sm text-on-surface-variant max-w-md mx-auto">
+                  When a community member identifies this property and submits proof of ownership, their verification claim will appear here for your review.
+                </p>
+              </div>
+            ) : (
+              claims.map((cl) => {
+                const claimant = cl.claimant || {}
+                const isPending = cl.status === 'pending'
+                const isApproved = cl.status === 'approved'
+
+                return (
+                  <div
+                    key={cl._id}
+                    className="p-5 sm:p-6 rounded-2xl bg-surface-container-low border border-outline-variant space-y-4 hover:border-primary/50 transition-all shadow-2xs"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 rounded-xl bg-primary text-secondary-fixed flex items-center justify-center font-bold text-headline-sm shrink-0">
+                          {claimant.name ? claimant.name.charAt(0).toUpperCase() : 'C'}
+                        </div>
+                        <div>
+                          <h4 className="text-body-md font-bold text-primary">{claimant.name || 'Verified Citizen'}</h4>
+                          <p className="text-label-sm text-on-surface-variant">{claimant.email || 'Email Protected'}</p>
+                          <p className="text-[11px] text-outline mt-0.5">Submitted {new Date(cl.createdAt).toLocaleString()}</p>
+                        </div>
+                      </div>
+
+                      <span className={`px-3 py-1 rounded-full text-label-sm font-bold uppercase ${
+                        isApproved
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                          : cl.status === 'rejected'
+                          ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                          : cl.status === 'info_requested'
+                          ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                          : 'bg-sky-100 text-sky-800 border border-sky-300'
+                      }`}>
+                        {cl.status.replace(/_/g, ' ')}
+                      </span>
+                    </div>
+
+                    {/* Proof Statement */}
+                    <div className="p-4 rounded-xl bg-surface-container-lowest border border-outline-variant/60 text-body-md text-primary">
+                      <span className="text-label-sm font-semibold text-outline uppercase block mb-1">Claimant Statement &amp; Proof:</span>
+                      <p className="whitespace-pre-line">{cl.proofDetails}</p>
+                    </div>
+
+                    {/* Proof Document Thumbnail */}
+                    {cl.proofImage && (
+                      <div>
+                        <span className="text-label-sm font-semibold text-outline uppercase block mb-1.5">Attached Document Proof:</span>
+                        <a
+                          href={cl.proofImage}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-block w-24 h-24 rounded-xl overflow-hidden border border-outline-variant hover:ring-2 hover:ring-primary transition-all"
+                        >
+                          <img src={cl.proofImage} alt="Claimant Proof" className="w-full h-full object-cover" />
+                        </a>
+                      </div>
+                    )}
+
+                    {/* Claimant Response if provided */}
+                    {cl.claimantResponse && (
+                      <div className="p-3.5 rounded-xl bg-surface-container-lowest border border-outline-variant text-body-sm">
+                        <span className="text-label-sm font-semibold text-secondary uppercase block mb-0.5">Claimant Follow-Up Response:</span>
+                        <p>{cl.claimantResponse}</p>
+                      </div>
+                    )}
+
+                    {/* Reviewer Action Buttons */}
+                    <div className="pt-2 flex flex-wrap items-center justify-end gap-2.5 border-t border-outline-variant/60">
+                      <button
+                        type="button"
+                        onClick={() => handleChatWithClaimant(claimant)}
+                        className="px-3.5 py-2 rounded-xl bg-surface-container hover:bg-surface-container-high text-primary font-semibold text-body-sm flex items-center gap-1.5 transition-colors"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">chat</span>
+                        <span>Message Claimant</span>
+                      </button>
+
+                      {isPending && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActionClaim(cl)
+                              setRequestInfoModalOpen(true)
+                            }}
+                            className="px-3.5 py-2 rounded-xl border border-outline-variant hover:border-amber-500 text-amber-800 font-semibold text-body-sm flex items-center gap-1.5 transition-colors"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">help</span>
+                            <span>Request Info</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActionClaim(cl)
+                              setRejectModalOpen(true)
+                            }}
+                            className="px-3.5 py-2 rounded-xl border border-outline-variant hover:border-rose-500 text-rose-700 font-semibold text-body-sm flex items-center gap-1.5 transition-colors"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">close</span>
+                            <span>Reject Claim</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActionClaim(cl)
+                              setApproveModalOpen(true)
+                            }}
+                            className="px-4 py-2 rounded-xl bg-secondary hover:bg-on-secondary-container text-on-secondary font-bold text-body-sm flex items-center gap-1.5 transition-colors shadow-2xs"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">check</span>
+                            <span>Approve Claim</span>
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        )}
+
+        {/* 3. Confidential Verification Marker (Reporter / Admin Only) */}
+        {canManage && item.confidentialVerification && (
+          <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200 text-amber-950 space-y-1">
+            <span className="text-label-sm font-bold text-amber-800 uppercase flex items-center gap-1">
+              <span className="material-symbols-outlined text-[16px]">lock</span>
+              <span>Your Confidential Verification Markers (Private to You)</span>
+            </span>
+            <p className="text-body-sm font-mono bg-white/80 p-2.5 rounded-lg border border-amber-200/60 select-all">
+              {item.confidentialVerification}
+            </p>
+            <p className="text-[11px] text-amber-700">
+              Citizens cannot see this. Compare claimants&apos; submitted proof against these secret details.
+            </p>
+          </div>
+        )}
+      </section>
+
+      {/* ── SECTION E: REAL-TIME MESSENGER ─────────────────────────────────── */}
+      {chatOpen && (
+        <section className="bg-surface-container-lowest rounded-3xl border border-outline-variant shadow-lg overflow-hidden animate-in fade-in duration-200">
+          {/* Chat Header */}
+          <div className="px-6 py-4 bg-primary text-on-primary flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-secondary text-on-secondary flex items-center justify-center">
+                <span className="material-symbols-outlined text-[20px]">chat</span>
+              </div>
+              <div>
+                <h3 className="text-body-md font-bold leading-tight">
+                  Direct Case Coordination Channel
+                </h3>
+                <p className="text-label-sm text-surface-container-high">
+                  Case #{caseId} &bull; Safe, in-app messaging
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setChatOpen(false)}
+              className="p-1 rounded-lg hover:bg-primary-container text-surface-container-high hover:text-white transition-colors"
+              aria-label="Close chat"
+            >
+              <span className="material-symbols-outlined text-[20px]">close</span>
+            </button>
+          </div>
+
+          {/* If reporter has multiple claimants, allow switching tabs */}
+          {canManage && conversationsList.length > 1 && (
+            <div className="px-4 py-2 bg-surface-container-low border-b border-outline-variant flex gap-2 overflow-x-auto">
+              <span className="text-label-sm font-semibold text-outline self-center shrink-0">Claimants:</span>
+              {conversationsList.map((convo) => {
+                const other = convo.participants.find((p) => (p._id || p) !== user?._id)
+                const isSelected = conversation?._id === convo._id
+                return (
+                  <button
+                    key={convo._id}
+                    type="button"
+                    onClick={() => {
+                      setConversation(convo)
+                      api.get(`/api/chat/conversations/${convo._id}/messages`).then(({ data }) => {
+                        if (data.success) setMessages(data.messages || [])
+                      })
+                    }}
+                    className={`px-3 py-1 rounded-lg text-label-sm font-semibold transition-all shrink-0 ${
+                      isSelected
+                        ? 'bg-primary text-on-primary'
+                        : 'bg-surface-container hover:bg-surface-container-high text-primary'
+                    }`}
+                  >
+                    {other?.name || 'Claimant Thread'}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
+          {/* Messages Feed */}
+          <div className="p-6 h-80 overflow-y-auto space-y-3 bg-surface-container-low custom-scrollbar">
+            {messages.length === 0 ? (
+              <div className="text-center py-16 text-on-surface-variant space-y-2">
+                <span className="material-symbols-outlined text-[36px] text-outline block">chat_bubble_outline</span>
+                <p className="text-body-md font-medium text-primary">No messages in this case channel yet.</p>
+                <p className="text-body-sm text-outline max-w-sm mx-auto">
+                  Coordinate questions, verification details, or safe public pickup locations here.
+                </p>
+              </div>
+            ) : (
+              messages.map((m) => {
+                const isMe = (m.sender?._id || m.sender) === user?._id
+                return (
+                  <div
+                    key={m._id}
+                    className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}
+                  >
+                    <div className="flex items-end gap-2 max-w-[85%] sm:max-w-[70%]">
+                      {!isMe && (
+                        <div className="w-7 h-7 rounded-full bg-primary text-secondary-fixed flex items-center justify-center text-label-sm font-bold shrink-0 mb-1">
+                          {m.sender?.name ? m.sender.name.charAt(0).toUpperCase() : 'U'}
+                        </div>
+                      )}
+                      <div
+                        className={`rounded-2xl px-4 py-2.5 text-body-sm leading-relaxed ${
+                          isMe
+                            ? 'bg-primary text-on-primary rounded-br-none shadow-xs'
+                            : 'bg-surface-container-lowest text-primary border border-outline-variant rounded-bl-none shadow-xs'
+                        }`}
+                      >
+                        <p className="whitespace-pre-line">{m.text}</p>
+                      </div>
+                    </div>
+                    <span className="text-[10px] text-outline mt-1 px-1">
+                      {new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                )
+              })
+            )}
+
+            {typingUser && (
+              <p className="text-label-sm font-semibold text-secondary animate-pulse">
+                {typingUser} is typing...
+              </p>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Chat Input */}
+          <form onSubmit={handleSendMessage} className="p-4 bg-surface-container-lowest border-t border-outline-variant flex gap-2">
+            <input
+              type="text"
+              value={msgText}
+              onChange={handleMsgInputChange}
+              placeholder="Write a message to coordinate safe return..."
+              className="flex-1 px-4 py-2.5 text-body-md bg-surface rounded-xl border border-outline-variant focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+            <button
+              type="submit"
+              disabled={sending || !msgText.trim()}
+              className="px-5 py-2.5 bg-primary hover:bg-primary-container disabled:opacity-50 text-on-primary rounded-xl font-bold text-body-md flex items-center gap-1.5 transition-colors shadow-2xs"
+            >
+              <span>Send</span>
+              <span className="material-symbols-outlined text-[18px]">send</span>
+            </button>
+          </form>
+        </section>
+      )}
+
+      {/* ── SECTION G: TECHNICAL VERIFICATION DISCLOSURE (COLLAPSIBLE) ────── */}
+      <section className="bg-surface-container-low rounded-2xl border border-outline-variant/60 overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setTechDetailsOpen((v) => !v)}
+          className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-surface-container transition-colors"
         >
+          <div className="flex items-center gap-2 text-body-sm font-semibold text-primary">
+            <span className="material-symbols-outlined text-[18px] text-secondary">memory</span>
+            <span>Technical Registry Record Details (Optional)</span>
+          </div>
+          <span className="material-symbols-outlined text-[20px] text-outline">
+            {techDetailsOpen ? 'expand_less' : 'expand_more'}
+          </span>
+        </button>
+
+        {techDetailsOpen && (
+          <div className="p-6 border-t border-outline-variant bg-surface-container-lowest grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 text-body-sm font-mono">
+            <div className="p-3 rounded-lg bg-surface-container-low">
+              <span className="text-[11px] text-outline uppercase block">MongoDB ObjectId</span>
+              <span className="text-primary font-bold text-xs select-all">{item._id}</span>
+            </div>
+            <div className="p-3 rounded-lg bg-surface-container-low">
+              <span className="text-[11px] text-outline uppercase block">CLIP Vector Dimension</span>
+              <span className="text-secondary font-bold text-xs">512-D Local Float Embedding</span>
+            </div>
+            <div className="p-3 rounded-lg bg-surface-container-low">
+              <span className="text-[11px] text-outline uppercase block">Coordinates Stored</span>
+              <span className="text-primary font-bold text-xs">
+                {item.location?.coordinates ? `${item.location.coordinates[1]}, ${item.location.coordinates[0]}` : 'General Locality Only'}
+              </span>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* ── MODALS & CONFIRMATION DIALOGS ──────────────────────────────────── */}
+
+      {/* 1. SUBMIT CLAIM MODAL */}
+      {claimModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-primary/60 backdrop-blur-sm animate-in fade-in duration-200">
           <div
-            className="fixed inset-0 bg-primary/45 backdrop-blur-sm transition-opacity"
+            className="fixed inset-0"
             onClick={() => setClaimModalOpen(false)}
           />
-
-          <div className="relative bg-surface-container-lowest rounded-2xl max-w-2xl w-full border border-outline-variant shadow-2xl overflow-hidden z-10 my-8">
-            <div className="px-6 py-5 border-b border-outline-variant/60 flex items-center justify-between">
+          <div className="relative bg-surface-container-lowest rounded-3xl max-w-2xl w-full border border-outline-variant shadow-2xl overflow-hidden z-10 max-h-[92vh] overflow-y-auto">
+            <div className="px-6 py-5 border-b border-outline-variant flex items-center justify-between bg-surface-container-low">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-surface-container text-primary flex items-center justify-center">
-                  <span className="material-symbols-outlined text-[22px] text-secondary">fact_check</span>
+                <div className="w-10 h-10 rounded-xl bg-secondary text-on-secondary flex items-center justify-center">
+                  <span className="material-symbols-outlined text-[22px]">verified</span>
                 </div>
                 <div>
-                  <h2 className="text-headline-sm font-headline-sm font-bold text-primary">
-                    Submit Ownership Claim
-                  </h2>
-                  <p className="text-body-sm font-body-sm text-on-surface-variant">
-                    Case #{caseId} &bull; {item.title}
-                  </p>
+                  <h3 className="text-headline-sm font-bold text-primary">Submit Ownership Claim</h3>
+                  <p className="text-body-sm text-on-surface-variant">Case #{caseId} &bull; {item.title}</p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setClaimModalOpen(false)}
-                className="w-8 h-8 rounded-lg hover:bg-surface-container flex items-center justify-center text-on-surface-variant transition-colors"
-                aria-label="Close modal"
+                className="w-8 h-8 rounded-lg hover:bg-surface-container flex items-center justify-center text-on-surface-variant"
               >
                 <span className="material-symbols-outlined text-[20px]">close</span>
               </button>
@@ -877,41 +1473,41 @@ export default function ItemDetail() {
 
             <form onSubmit={handleSubmitClaim} className="p-6 space-y-4">
               <div>
-                <label className="block text-label-md font-label-md text-primary font-semibold mb-1.5">
+                <label className="block text-label-md font-semibold text-primary mb-1.5">
                   Proof of Ownership Statement <span className="text-error">*</span>
                 </label>
                 <textarea
-                  rows={3}
+                  rows={4}
                   required
                   value={proofDetails}
                   onChange={(e) => setProofDetails(e.target.value)}
-                  placeholder="Describe unique hidden markings, contents, serial numbers, wallpaper, lock code, purchase details..."
-                  className="w-full px-4 py-2.5 text-body-md font-body-md bg-surface border border-outline-variant rounded-xl focus:outline-none focus:ring-2 focus:ring-primary"
+                  placeholder="Describe unique hidden markings, scratches, contents, purchase receipt info, phone wallpaper, engravings, or any distinctive features..."
+                  className="w-full px-4 py-3 text-body-md bg-surface rounded-xl border border-outline-variant focus:outline-none focus:ring-2 focus:ring-primary"
                 />
               </div>
 
               <div>
-                <label className="block text-label-md font-label-md text-primary font-semibold mb-1.5">
-                  Serial Number or Engraved Hallmark (Optional)
+                <label className="block text-label-md font-semibold text-primary mb-1.5">
+                  Serial Number or Unique ID (Optional)
                 </label>
                 <input
                   type="text"
                   value={serialProof}
                   onChange={(e) => setSerialProof(e.target.value)}
-                  placeholder="e.g. C02G41K9MD6R or IMEI prefix"
-                  className="w-full px-4 py-2.5 text-body-md font-body-md bg-surface border border-outline-variant rounded-xl focus:outline-none focus:ring-2 focus:ring-primary"
+                  placeholder="e.g. Serial prefix, IMEI, registration code, engraved name..."
+                  className="w-full px-4 py-2.5 text-body-md bg-surface rounded-xl border border-outline-variant focus:outline-none focus:ring-2 focus:ring-primary"
                 />
               </div>
 
               <div>
-                <label className="block text-label-md font-label-md text-primary font-semibold mb-1.5">
-                  Upload Proof Document or Photo (Receipt, Box, ID)
+                <label className="block text-label-md font-semibold text-primary mb-1.5">
+                  Supporting Photo or Document (Receipt, Box, Photo with Item)
                 </label>
                 <input
                   type="file"
                   accept="image/*"
                   onChange={(e) => {
-                    const f = e.target.files[0]
+                    const f = e.target.files?.[0]
                     if (f) {
                       setProofFile(f)
                       setProofPreview(URL.createObjectURL(f))
@@ -920,40 +1516,33 @@ export default function ItemDetail() {
                   className="w-full text-body-sm file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-body-sm file:font-semibold file:bg-primary file:text-white hover:file:bg-primary-container cursor-pointer"
                 />
                 {proofPreview && (
-                  <div className="mt-2 w-20 h-20 rounded-lg overflow-hidden border border-outline-variant">
-                    <img src={proofPreview} alt="Proof" className="w-full h-full object-cover" />
+                  <div className="mt-3 w-24 h-24 rounded-xl overflow-hidden border border-outline-variant">
+                    <img src={proofPreview} alt="Preview" className="w-full h-full object-cover" />
                   </div>
                 )}
               </div>
 
-              <div className="p-3.5 rounded-xl bg-surface-container border border-outline-variant/60 text-body-sm font-body-sm text-on-surface-variant flex items-start gap-2.5">
-                <span className="material-symbols-outlined text-secondary text-[20px] mt-0.5">verified</span>
+              <div className="p-4 rounded-xl bg-surface-container-low text-body-sm text-on-surface-variant flex items-start gap-2.5">
+                <span className="material-symbols-outlined text-secondary text-[20px] shrink-0 mt-0.5">lock</span>
                 <span>
-                  All claims are sent directly to the verified custodian and logged in municipal custody ledger. You will be notified when reviewed.
+                  Your claim details will be sent privately to the item coordinator. Secret verification markers are strictly protected.
                 </span>
               </div>
 
-              <div className="pt-3 border-t border-outline-variant/60 flex justify-end gap-3">
+              <div className="pt-4 border-t border-outline-variant flex justify-end gap-3">
                 <button
                   type="button"
                   onClick={() => setClaimModalOpen(false)}
-                  className="px-4 py-2 rounded-xl border border-outline-variant hover:bg-surface-container text-primary text-body-sm font-semibold"
+                  className="px-4 py-2.5 rounded-xl border border-outline-variant hover:bg-surface-container text-primary font-semibold text-body-sm"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={submittingClaim}
-                  className="px-5 py-2 rounded-xl bg-primary hover:bg-primary-container disabled:opacity-50 text-on-primary text-body-sm font-semibold flex items-center gap-2"
+                  className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-container disabled:opacity-50 text-on-primary font-bold text-body-sm flex items-center gap-2"
                 >
-                  {submittingClaim ? (
-                    <>
-                      <span className="material-symbols-outlined text-[16px] animate-spin">sync</span>
-                      <span>Submitting Claim...</span>
-                    </>
-                  ) : (
-                    <span>Submit Verification Claim</span>
-                  )}
+                  {submittingClaim ? 'Submitting Claim...' : 'Submit Verification Claim'}
                 </button>
               </div>
             </form>
@@ -961,17 +1550,455 @@ export default function ItemDetail() {
         </div>
       )}
 
-      {/* INSPECT 4K IMAGE MODAL */}
+      {/* 2. CONFIRM HANDOVER MODAL */}
+      {handoverModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-primary/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="fixed inset-0" onClick={() => setHandoverModalOpen(false)} />
+          <div className="relative bg-surface-container-lowest rounded-3xl max-w-lg w-full border border-outline-variant shadow-2xl p-6 z-10 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center">
+                <span className="material-symbols-outlined text-[24px]">handshake</span>
+              </div>
+              <div>
+                <h3 className="text-headline-sm font-bold text-primary">Confirm Item Handover</h3>
+                <p className="text-body-sm text-on-surface-variant">Mark case as Successfully Reunited</p>
+              </div>
+            </div>
+
+            <p className="text-body-md text-on-surface-variant leading-relaxed">
+              Are you sure you have completed the safe handover of <strong>{item.title}</strong> to the verified owner?
+            </p>
+
+            <div>
+              <label className="block text-label-md font-semibold text-primary mb-1.5">
+                Handover Notes (Optional)
+              </label>
+              <textarea
+                rows={3}
+                value={handoverNotes}
+                onChange={(e) => setHandoverNotes(e.target.value)}
+                placeholder="e.g. Returned in person to Alice at Main Library lobby on Friday..."
+                className="w-full px-4 py-2.5 text-body-md bg-surface rounded-xl border border-outline-variant focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+
+            <div className="pt-3 border-t border-outline-variant flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setHandoverModalOpen(false)}
+                className="px-4 py-2 rounded-xl border border-outline-variant hover:bg-surface-container text-primary font-semibold text-body-sm"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={submittingHandover}
+                onClick={handleConfirmHandoverSubmit}
+                className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-body-sm"
+              >
+                {submittingHandover ? 'Recording...' : 'Confirm Handover & Reunite'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3. VIEW RECOVERY RECORD MODAL */}
+      {recoveryRecordModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-primary/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="fixed inset-0" onClick={() => setRecoveryRecordModalOpen(false)} />
+          <div className="relative bg-surface-container-lowest rounded-3xl max-w-lg w-full border border-outline-variant shadow-2xl p-6 z-10 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-outline-variant">
+              <div className="flex items-center gap-2.5 text-emerald-800">
+                <span className="material-symbols-outlined text-[24px]">verified</span>
+                <h3 className="text-headline-sm font-bold">Official Recovery Record</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRecoveryRecordModalOpen(false)}
+                className="p-1 text-on-surface-variant hover:text-primary"
+              >
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 space-y-2 text-emerald-950">
+              <p className="font-bold text-body-md">Successfully Reunited &amp; Returned</p>
+              <p className="text-body-sm">
+                This item was confirmed as successfully returned to its rightful owner.
+              </p>
+            </div>
+
+            <div className="space-y-2.5 text-body-sm text-primary">
+              <div className="flex justify-between py-1 border-b border-outline-variant/40">
+                <span className="text-outline">Item Case:</span>
+                <span className="font-semibold">{item.title}</span>
+              </div>
+              <div className="flex justify-between py-1 border-b border-outline-variant/40">
+                <span className="text-outline">Date Reunited:</span>
+                <span className="font-semibold">
+                  {new Date(item.handover?.completedAt || item.updatedAt).toLocaleDateString()}
+                </span>
+              </div>
+              <div className="flex justify-between py-1 border-b border-outline-variant/40">
+                <span className="text-outline">Recorded Handover Notes:</span>
+                <span className="font-semibold">{item.handover?.notes || 'Returned directly to owner'}</span>
+              </div>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setRecoveryRecordModalOpen(false)}
+                className="px-5 py-2 rounded-xl bg-primary text-white font-bold text-body-sm"
+              >
+                Close Record
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 4. APPROVE CLAIM CONFIRMATION MODAL */}
+      {approveModalOpen && actionClaim && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-primary/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="fixed inset-0" onClick={() => setApproveModalOpen(false)} />
+          <div className="relative bg-surface-container-lowest rounded-3xl max-w-lg w-full border border-outline-variant shadow-2xl p-6 z-10 space-y-4">
+            <h3 className="text-headline-sm font-bold text-primary flex items-center gap-2">
+              <span className="material-symbols-outlined text-secondary text-[24px]">verified</span>
+              <span>Approve Ownership Claim?</span>
+            </h3>
+            <p className="text-body-md text-on-surface-variant">
+              Confirming this will mark the claim by <strong>{actionClaim.claimant?.name}</strong> as verified, and advance the case to <strong>Ready for Handover</strong>.
+            </p>
+
+            <div>
+              <label className="block text-label-md font-semibold text-primary mb-1">
+                Approval Note for Claimant (Optional)
+              </label>
+              <textarea
+                rows={2}
+                value={decisionReason}
+                onChange={(e) => setDecisionReason(e.target.value)}
+                placeholder="e.g. Serial number and markings match our records. Let's arrange handover."
+                className="w-full px-4 py-2 text-body-sm bg-surface rounded-xl border border-outline-variant"
+              />
+            </div>
+
+            <div className="pt-3 border-t border-outline-variant flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setApproveModalOpen(false)}
+                className="px-4 py-2 rounded-xl border border-outline-variant text-primary font-semibold text-body-sm"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={actioningClaim}
+                onClick={handleApproveClaimConfirm}
+                className="px-5 py-2 rounded-xl bg-secondary hover:bg-on-secondary-container text-on-secondary font-bold text-body-sm"
+              >
+                {actioningClaim ? 'Approving...' : 'Yes, Approve Claim'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. REJECT CLAIM CONFIRMATION MODAL */}
+      {rejectModalOpen && actionClaim && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-primary/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="fixed inset-0" onClick={() => setRejectModalOpen(false)} />
+          <div className="relative bg-surface-container-lowest rounded-3xl max-w-lg w-full border border-outline-variant shadow-2xl p-6 z-10 space-y-4">
+            <h3 className="text-headline-sm font-bold text-rose-700 flex items-center gap-2">
+              <span className="material-symbols-outlined text-[24px]">block</span>
+              <span>Reject Ownership Claim</span>
+            </h3>
+            <p className="text-body-md text-on-surface-variant">
+              Provide a reason why the claim by <strong>{actionClaim.claimant?.name}</strong> is being rejected.
+            </p>
+
+            <div>
+              <label className="block text-label-md font-semibold text-primary mb-1">
+                Reason for Rejection
+              </label>
+              <textarea
+                rows={3}
+                value={decisionReason}
+                onChange={(e) => setDecisionReason(e.target.value)}
+                placeholder="e.g. The provided photo/serial markings do not correspond to this item."
+                className="w-full px-4 py-2 text-body-sm bg-surface rounded-xl border border-outline-variant"
+              />
+            </div>
+
+            <div className="pt-3 border-t border-outline-variant flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setRejectModalOpen(false)}
+                className="px-4 py-2 rounded-xl border border-outline-variant text-primary font-semibold text-body-sm"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={actioningClaim}
+                onClick={handleRejectClaimConfirm}
+                className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-body-sm"
+              >
+                {actioningClaim ? 'Rejecting...' : 'Confirm Rejection'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 6. REQUEST MORE INFO MODAL */}
+      {requestInfoModalOpen && actionClaim && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-primary/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="fixed inset-0" onClick={() => setRequestInfoModalOpen(false)} />
+          <div className="relative bg-surface-container-lowest rounded-3xl max-w-lg w-full border border-outline-variant shadow-2xl p-6 z-10 space-y-4">
+            <h3 className="text-headline-sm font-bold text-primary flex items-center gap-2">
+              <span className="material-symbols-outlined text-amber-600 text-[24px]">help</span>
+              <span>Request More Information</span>
+            </h3>
+            <p className="text-body-sm text-on-surface-variant">
+              Ask <strong>{actionClaim.claimant?.name}</strong> to supply specific additional verification details.
+            </p>
+
+            <div>
+              <label className="block text-label-md font-semibold text-primary mb-1">
+                Required Proof Description <span className="text-error">*</span>
+              </label>
+              <textarea
+                rows={3}
+                required
+                value={infoRequestMessage}
+                onChange={(e) => setInfoRequestMessage(e.target.value)}
+                placeholder="e.g. Please provide a photo of the original packaging or specify what brand of charm is on the keychain."
+                className="w-full px-4 py-2 text-body-sm bg-surface rounded-xl border border-outline-variant"
+              />
+            </div>
+
+            <div className="pt-3 border-t border-outline-variant flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setRequestInfoModalOpen(false)}
+                className="px-4 py-2 rounded-xl border border-outline-variant text-primary font-semibold text-body-sm"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={actioningClaim || !infoRequestMessage.trim()}
+                onClick={handleRequestInfoConfirm}
+                className="px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-body-sm"
+              >
+                {actioningClaim ? 'Sending...' : 'Send Request'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 7. CLAIMANT RESPOND TO INFO MODAL */}
+      {respondModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-primary/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="fixed inset-0" onClick={() => setRespondModalOpen(false)} />
+          <div className="relative bg-surface-container-lowest rounded-3xl max-w-lg w-full border border-outline-variant shadow-2xl p-6 z-10 space-y-4">
+            <h3 className="text-headline-sm font-bold text-primary">Provide Additional Proof</h3>
+            <p className="text-body-sm text-on-surface-variant">
+              The reporter requested: <em>&quot;{item?.userClaim?.infoRequestedMessage}&quot;</em>
+            </p>
+
+            <div>
+              <label className="block text-label-md font-semibold text-primary mb-1">
+                Your Response <span className="text-error">*</span>
+              </label>
+              <textarea
+                rows={4}
+                required
+                value={claimantResponseText}
+                onChange={(e) => setClaimantResponseText(e.target.value)}
+                placeholder="Provide the requested details to verify ownership..."
+                className="w-full px-4 py-2 text-body-sm bg-surface rounded-xl border border-outline-variant"
+              />
+            </div>
+
+            <div className="pt-3 border-t border-outline-variant flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setRespondModalOpen(false)}
+                className="px-4 py-2 rounded-xl border border-outline-variant text-primary font-semibold text-body-sm"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={submittingResponse || !claimantResponseText.trim()}
+                onClick={handleRespondToInfoSubmit}
+                className="px-5 py-2 rounded-xl bg-primary text-white font-bold text-body-sm"
+              >
+                {submittingResponse ? 'Submitting...' : 'Submit Response'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 8. EDIT CASE MODAL */}
+      {editModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-primary/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="fixed inset-0" onClick={() => setEditModalOpen(false)} />
+          <div className="relative bg-surface-container-lowest rounded-3xl max-w-lg w-full border border-outline-variant shadow-2xl p-6 z-10 space-y-4">
+            <h3 className="text-headline-sm font-bold text-primary">Edit Case Information</h3>
+
+            <form onSubmit={handleEditCaseSubmit} className="space-y-3">
+              <div>
+                <label className="block text-label-sm font-semibold text-primary mb-1">Title</label>
+                <input
+                  type="text"
+                  required
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  className="w-full px-3.5 py-2 text-body-sm bg-surface rounded-xl border border-outline-variant"
+                />
+              </div>
+
+              <div>
+                <label className="block text-label-sm font-semibold text-primary mb-1">Category</label>
+                <input
+                  type="text"
+                  required
+                  value={editCategory}
+                  onChange={(e) => setEditCategory(e.target.value)}
+                  className="w-full px-3.5 py-2 text-body-sm bg-surface rounded-xl border border-outline-variant"
+                />
+              </div>
+
+              <div>
+                <label className="block text-label-sm font-semibold text-primary mb-1">Subcategory</label>
+                <input
+                  type="text"
+                  value={editSubCategory}
+                  onChange={(e) => setEditSubCategory(e.target.value)}
+                  className="w-full px-3.5 py-2 text-body-sm bg-surface rounded-xl border border-outline-variant"
+                />
+              </div>
+
+              <div>
+                <label className="block text-label-sm font-semibold text-primary mb-1">General Location</label>
+                <input
+                  type="text"
+                  value={editLocation}
+                  onChange={(e) => setEditLocation(e.target.value)}
+                  className="w-full px-3.5 py-2 text-body-sm bg-surface rounded-xl border border-outline-variant"
+                />
+              </div>
+
+              <div>
+                <label className="block text-label-sm font-semibold text-primary mb-1">Description</label>
+                <textarea
+                  rows={3}
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  className="w-full px-3.5 py-2 text-body-sm bg-surface rounded-xl border border-outline-variant"
+                />
+              </div>
+
+              <div className="pt-3 border-t border-outline-variant flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setEditModalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-outline-variant text-primary font-semibold text-body-sm"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingEdit}
+                  className="px-5 py-2 rounded-xl bg-primary text-white font-bold text-body-sm"
+                >
+                  {savingEdit ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 9. CLOSE CASE CONFIRMATION MODAL */}
+      {closeCaseModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-primary/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="fixed inset-0" onClick={() => setCloseCaseModalOpen(false)} />
+          <div className="relative bg-surface-container-lowest rounded-3xl max-w-md w-full border border-outline-variant shadow-2xl p-6 z-10 space-y-4">
+            <h3 className="text-headline-sm font-bold text-primary">Close Recovery Case?</h3>
+            <p className="text-body-md text-on-surface-variant">
+              Closing this case archives it in the registry ledger. You can reopen it at any time if needed.
+            </p>
+            <div className="pt-3 border-t border-outline-variant flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setCloseCaseModalOpen(false)}
+                className="px-4 py-2 rounded-xl border border-outline-variant text-primary font-semibold text-body-sm"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={submittingStatusChange}
+                onClick={handleCloseCaseSubmit}
+                className="px-5 py-2 rounded-xl bg-primary text-white font-bold text-body-sm"
+              >
+                {submittingStatusChange ? 'Closing...' : 'Confirm Close Case'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 10. REOPEN CASE CONFIRMATION MODAL */}
+      {reopenCaseModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-primary/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="fixed inset-0" onClick={() => setReopenCaseModalOpen(false)} />
+          <div className="relative bg-surface-container-lowest rounded-3xl max-w-md w-full border border-outline-variant shadow-2xl p-6 z-10 space-y-4">
+            <h3 className="text-headline-sm font-bold text-primary">Reopen Case?</h3>
+            <p className="text-body-md text-on-surface-variant">
+              Reopening will restore this item to <strong>Active</strong> in the public lost &amp; found directory.
+            </p>
+            <div className="pt-3 border-t border-outline-variant flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setReopenCaseModalOpen(false)}
+                className="px-4 py-2 rounded-xl border border-outline-variant text-primary font-semibold text-body-sm"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={submittingStatusChange}
+                onClick={handleReopenCaseSubmit}
+                className="px-5 py-2 rounded-xl bg-primary text-white font-bold text-body-sm"
+              >
+                {submittingStatusChange ? 'Reopening...' : 'Confirm Reopen'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 11. INSPECT IMAGE MODAL */}
       {inspectModal && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-primary/80 backdrop-blur-md"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-primary/85 backdrop-blur-md animate-in fade-in duration-200"
           onClick={() => setInspectModal(false)}
         >
           <div className="relative max-w-4xl max-h-[90vh] bg-surface-container-lowest rounded-2xl overflow-hidden border border-outline-variant p-2">
             <img src={activeImage} alt={item.title} className="w-full h-full max-h-[85vh] object-contain rounded-xl" />
             <button
+              type="button"
               onClick={() => setInspectModal(false)}
-              className="absolute top-4 right-4 p-2 rounded-full bg-primary/80 text-white hover:bg-primary"
+              className="absolute top-4 right-4 p-2 rounded-full bg-primary/80 text-white hover:bg-primary transition-colors"
             >
               <span className="material-symbols-outlined text-[20px]">close</span>
             </button>

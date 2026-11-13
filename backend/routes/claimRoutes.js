@@ -6,7 +6,9 @@ const {
   submitClaim,
   getItemClaims,
   getMyClaims,
-  resolveClaim
+  resolveClaim,
+  requestClaimInfo,
+  respondToClaimInfo
 } = require('../controllers/claimController');
 
 // User's own submitted claims
@@ -23,5 +25,9 @@ router.post('/item/:itemId', protect, uploadSingle('proofImage'), submitClaim);
 // Resolve claim (Approve / Reject by Reporter)
 router.patch('/:claimId/resolve', protect, resolveClaim);
 router.patch('/:claimId/status', protect, resolveClaim);
+
+// Request more information / Respond to information request
+router.post('/:claimId/request-info', protect, requestClaimInfo);
+router.post('/:claimId/respond', protect, respondToClaimInfo);
 
 module.exports = router;

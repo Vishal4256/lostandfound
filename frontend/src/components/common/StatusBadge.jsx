@@ -1,39 +1,23 @@
-export default function StatusBadge({ status, type, className = '' }) {
-  const normStatus = (status || '').toLowerCase()
-  const normType = (type || '').toLowerCase()
+import { getStatusMeta } from '../../utils/formatters'
 
-  if (normStatus === 'resolved') {
-    return (
-      <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-surface-container-high text-primary font-label-sm text-label-sm border border-outline-variant font-semibold ${className}`}>
-        <span className="material-symbols-outlined text-[13px] material-symbols-filled">check_circle</span>
-        RESOLVED / REUNITED
-      </span>
-    )
-  }
+export default function StatusBadge({ status, type, className = '', showExplanation = false }) {
+  const meta = getStatusMeta(status, type)
 
-  if (normStatus.includes('pending') || normStatus === 'under_review') {
-    return (
-      <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-tertiary-fixed text-on-tertiary-fixed-variant font-label-sm text-label-sm border border-tertiary-fixed-dim font-semibold ${className}`}>
-        <span className="material-symbols-outlined text-[13px]">pending</span>
-        CLAIM PENDING
-      </span>
-    )
-  }
-
-  if (normType === 'found') {
-    return (
-      <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-secondary-container text-on-secondary-fixed-variant font-label-sm text-label-sm border border-secondary-fixed font-semibold ${className}`}>
-        <span className="material-symbols-outlined text-[13px] material-symbols-filled">verified</span>
-        FOUND / IN CUSTODY
-      </span>
-    )
-  }
-
-  // Default: Lost
   return (
-    <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-tertiary-fixed text-on-tertiary-fixed-variant font-label-sm text-label-sm border border-tertiary-fixed-dim font-semibold ${className}`}>
-      <span className="material-symbols-outlined text-[13px]">fmd_bad</span>
-      LOST REPORT
-    </span>
+    <div className="inline-flex flex-col">
+      <span
+        className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-label-sm font-semibold border shadow-2xs ${meta.badgeClass} ${className}`}
+      >
+        <span className="material-symbols-outlined text-[15px] material-symbols-filled">
+          {meta.icon}
+        </span>
+        <span>{meta.label}</span>
+      </span>
+      {showExplanation && (
+        <span className="text-[12px] text-on-surface-variant mt-1 pl-1">
+          {meta.description}
+        </span>
+      )}
+    </div>
   )
 }

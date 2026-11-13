@@ -395,7 +395,7 @@ export default function Dashboard() {
                         </div>
 
                         <Link
-                          to={`/item/${itemData._id || itemData}`}
+                          to={`/item/${itemData._id || itemData}?action=chat`}
                           className="px-4 py-2 rounded-xl bg-primary text-on-primary text-body-sm font-semibold flex items-center gap-1 shadow-xs hover:bg-primary-container transition-colors"
                         >
                           <span>Open Channel</span>

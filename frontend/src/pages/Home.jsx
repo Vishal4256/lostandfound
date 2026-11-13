@@ -5,7 +5,7 @@ import ItemCard from '../components/common/ItemCard'
 import EmptyState from '../components/common/EmptyState'
 import VisualSearchModal from '../components/VisualSearchModal'
 import MatchResultsGrid from '../components/MatchResultsGrid'
-import { getLocationSearchText } from '../utils/formatters'
+import { getLocationSearchText, formatLocation } from '../utils/formatters'
 
 const CATEGORIES = [
   { id: 'All', label: 'All', icon: 'dashboard' },
@@ -62,19 +62,25 @@ export default function Home() {
     if (sortBy !== 'newest') params.set('sort', sortBy)
     if (currentPage > 1) params.set('page', String(currentPage))
 
-    setSearchParams(params, { replace: true })
+    const newQuery = params.toString()
+    const currentQuery = window.location.search.replace(/^\?/, '')
+    if (newQuery !== currentQuery) {
+      setSearchParams(params, { replace: true })
+    }
   }, [searchQuery, category, type, locationQuery, verifiedOnly, sortBy, currentPage, setSearchParams])
 
   // Sync when navbar triggers external search parameter changes
-  const externalSearch = searchParams.get('search')
-  const [prevExternalSearch, setPrevExternalSearch] = useState(externalSearch)
-  if (prevExternalSearch !== externalSearch) {
-    setPrevExternalSearch(externalSearch)
-    if (externalSearch !== null && externalSearch !== searchQuery) {
-      setSearchQuery(externalSearch)
-      setCurrentPage(1)
-    }
-  }
+  useEffect(() => {
+    const externalSearch = searchParams.get('search') || ''
+    // eslint-disable-next-line react/set-state-in-effect
+    setSearchQuery((prev) => {
+      if (prev !== externalSearch) {
+        setCurrentPage(1)
+        return externalSearch
+      }
+      return prev
+    })
+  }, [searchParams])
 
   const fetchItems = useCallback(async () => {
     setLoading(true)

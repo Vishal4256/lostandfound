@@ -23,8 +23,30 @@ const claimSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'approved', 'rejected'],
+    enum: ['pending', 'approved', 'rejected', 'info_requested'],
     default: 'pending'
+  },
+  decisionReason: {
+    type: String,
+    default: '',
+    maxlength: [1000, 'Decision reason cannot exceed 1000 characters']
+  },
+  infoRequestedMessage: {
+    type: String,
+    default: '',
+    maxlength: [1000, 'Information request cannot exceed 1000 characters']
+  },
+  claimantResponse: {
+    type: String,
+    default: '',
+    maxlength: [2000, 'Claimant response cannot exceed 2000 characters']
+  },
+  reviewedBy: {
+    type: mongoose.Schema.ObjectId,
+    ref: 'User'
+  },
+  reviewedAt: {
+    type: Date
   }
 }, { timestamps: true });
 

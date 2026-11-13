@@ -49,12 +49,7 @@ async function generateImageEmbedding(imageInput) {
     
     let image;
     if (Buffer.isBuffer(imageInput)) {
-      const sharp = require('sharp');
-      const { data, info } = await sharp(imageInput)
-        .ensureAlpha()
-        .raw()
-        .toBuffer({ resolveWithObject: true });
-      image = new RawImage(data, info.width, info.height, 4);
+      image = await RawImage.fromBlob(new Blob([imageInput]));
     } else {
       // If it's a URL or path string
       image = await RawImage.read(imageInput);

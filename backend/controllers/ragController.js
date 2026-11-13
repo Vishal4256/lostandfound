@@ -13,7 +13,7 @@ const { processRagQuery } = require('../services/ragService');
  */
 exports.handleRecoveryQuery = async (req, res) => {
   try {
-    const { query, conversationHistory } = req.body;
+    const { query, conversationHistory, caseContext } = req.body;
 
     if (!query || typeof query !== 'string' || !query.trim()) {
       return res.status(400).json({
@@ -31,7 +31,8 @@ exports.handleRecoveryQuery = async (req, res) => {
 
     const result = await processRagQuery({
       query: query.trim(),
-      conversationHistory: Array.isArray(conversationHistory) ? conversationHistory.slice(-4) : []
+      conversationHistory: Array.isArray(conversationHistory) ? conversationHistory.slice(-4) : [],
+      caseContext: caseContext || null
     });
 
     return res.status(200).json({

@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion, AnimatePresence, useDragControls } from 'framer-motion'
 import { toast } from 'sonner'
 import api from '../services/api'
 import { useAuth } from '../context/AuthContext'
@@ -100,9 +100,12 @@ export default function AiRecoveryAssistant({ isOpen: controlledIsOpen, onToggle
   const { isAuthenticated } = useAuth()
   const navigate = useNavigate()
   const idCounterRef = useRef(1)
+  const isDraggingLauncherRef = useRef(false)
+  const modalDragControls = useDragControls()
 
   const [inputQuery, setInputQuery] = useState('')
   const [loading, setLoading] = useState(false)
+  const [activeCaseContext, setActiveCaseContext] = useState(null)
   const [messages, setMessages] = useState([
     {
       id: 'welcome',
@@ -124,9 +127,14 @@ export default function AiRecoveryAssistant({ isOpen: controlledIsOpen, onToggle
     }
   }, [messages, isOpen])
 
-  // Support global custom event to open assistant from any page/button
+  // Support global custom event to open assistant from any page/button with optional case context
   useEffect(() => {
-    const handleOpen = () => setIsOpen(true)
+    const handleOpen = (e) => {
+      setIsOpen(true)
+      if (e?.detail?.caseContext) {
+        setActiveCaseContext(e.detail.caseContext)
+      }
+    }
     window.addEventListener('open-rag-assistant', handleOpen)
     return () => window.removeEventListener('open-rag-assistant', handleOpen)
   }, [setIsOpen])
@@ -138,7 +146,7 @@ export default function AiRecoveryAssistant({ isOpen: controlledIsOpen, onToggle
     'Found a blue backpack in the library'
   ]
 
-  const handleSend = async (queryToSend) => {
+  const handleSend = async (queryToSend, contextOverride) => {
     const query = (queryToSend || inputQuery).trim()
     if (!query || loading) return
 
@@ -171,7 +179,8 @@ export default function AiRecoveryAssistant({ isOpen: controlledIsOpen, onToggle
 
       const response = await api.post('/api/ai/recovery', {
         query,
-        conversationHistory
+        conversationHistory,
+        caseContext: contextOverride || activeCaseContext
       })
 
       if (response.data?.success) {
@@ -220,16 +229,45 @@ export default function AiRecoveryAssistant({ isOpen: controlledIsOpen, onToggle
 
   return (
     <>
-      {/* Floating Action Launcher Button */}
-      <div className="fixed bottom-6 right-6 z-40 flex items-center">
-        <motion.button
+      {/* Draggable Floating Action Launcher Button */}
+      <motion.div
+        drag
+        dragMomentum={false}
+        dragElastic={0.08}
+        onDragStart={() => {
+          isDraggingLauncherRef.current = true
+        }}
+        onDragEnd={() => {
+          setTimeout(() => {
+            isDraggingLauncherRef.current = false
+          }, 150)
+        }}
+        whileHover={{ scale: 1.05 }}
+        whileDrag={{ scale: 1.08, cursor: 'grabbing' }}
+        className="fixed bottom-6 right-6 z-40 flex items-center cursor-grab active:cursor-grabbing select-none touch-none"
+      >
+        <button
           id="rag-assistant-launcher-btn"
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-          onClick={() => setIsOpen(!isOpen)}
-          className="relative group flex items-center gap-3 px-4 py-3.5 rounded-2xl bg-surface-container-lowest border border-outline-variant shadow-2xl hover:border-secondary hover:shadow-secondary/20 transition-all cursor-pointer backdrop-blur-xl"
-          aria-label="Open HavenFind AI Recovery Assistant"
+          type="button"
+          onClick={(e) => {
+            if (isDraggingLauncherRef.current) {
+              e.preventDefault()
+              e.stopPropagation()
+              return
+            }
+            setIsOpen(!isOpen)
+          }}
+          className="relative group flex items-center gap-2.5 px-4 py-3 rounded-2xl bg-surface-container-lowest border border-outline-variant shadow-2xl hover:border-secondary hover:shadow-secondary/20 transition-all cursor-grab active:cursor-grabbing backdrop-blur-xl"
+          aria-label="Open HavenFind AI Recovery Assistant (Draggable)"
         >
+          {/* Visual drag handle grip indicator */}
+          <span
+            className="material-symbols-outlined text-outline/40 group-hover:text-secondary text-[16px] transition-colors"
+            title="Drag anywhere on your screen"
+          >
+            drag_indicator
+          </span>
+
           {/* Subtle pulsating glow indicator */}
           <span className="relative flex h-3 w-3">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-secondary opacity-75" />
@@ -247,22 +285,37 @@ export default function AiRecoveryAssistant({ isOpen: controlledIsOpen, onToggle
           <span className="px-1.5 py-0.5 rounded-md bg-secondary/10 text-secondary text-[11px] font-semibold">
             Ask AI
           </span>
-        </motion.button>
-      </div>
+        </button>
+      </motion.div>
 
-      {/* Slide-over / Modal Chat Window */}
+      {/* Slide-over / Draggable Modal Chat Window */}
       <AnimatePresence>
         {isOpen && (
           <motion.div
+            drag
+            dragListener={false}
+            dragControls={modalDragControls}
+            dragMomentum={false}
+            dragElastic={0.06}
             initial={{ opacity: 0, y: 30, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 30, scale: 0.96 }}
             transition={{ duration: 0.22, ease: 'easeOut' }}
             className="fixed bottom-24 right-4 sm:right-6 z-50 w-[94vw] sm:w-[460px] h-[640px] max-h-[82vh] bg-surface-container-lowest rounded-2xl border border-outline-variant shadow-2xl flex flex-col overflow-hidden backdrop-blur-2xl"
           >
-            {/* Header */}
-            <div className="px-4 py-3.5 bg-surface-container-low border-b border-outline-variant flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
+            {/* Header (Draggable Handle) */}
+            <div
+              onPointerDown={(e) => {
+                if (e.target.closest('button')) return
+                modalDragControls.start(e)
+              }}
+              className="px-4 py-3.5 bg-surface-container-low border-b border-outline-variant flex items-center justify-between cursor-grab active:cursor-grabbing select-none touch-none"
+              title="Drag header to move chat window"
+            >
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-outline/40 hover:text-secondary text-[18px]">
+                  drag_indicator
+                </span>
                 <div className="w-8 h-8 rounded-xl bg-secondary-container flex items-center justify-center text-on-secondary-fixed-variant">
                   <span className="material-symbols-outlined text-[18px]">psychology</span>
                 </div>
