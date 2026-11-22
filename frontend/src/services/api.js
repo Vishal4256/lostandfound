@@ -1,6 +1,22 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+let rawBaseUrl = (import.meta.env.VITE_API_URL || '').trim();
+
+// Normalize URL: strip trailing slashes and /api suffix if present,
+// since all frontend endpoints already prefix with '/api/...'
+if (rawBaseUrl.endsWith('/api/')) {
+  rawBaseUrl = rawBaseUrl.slice(0, -5);
+} else if (rawBaseUrl.endsWith('/api')) {
+  rawBaseUrl = rawBaseUrl.slice(0, -4);
+}
+rawBaseUrl = rawBaseUrl.replace(/\/+$/, '');
+
+// If running in production (not localhost) and VITE_API_URL was omitted, fallback to Render backend
+if (!rawBaseUrl && typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+  rawBaseUrl = 'https://lostandfound-f74b.onrender.com';
+}
+
+const API_BASE_URL = rawBaseUrl;
 
 const api = axios.create({
   baseURL: API_BASE_URL,

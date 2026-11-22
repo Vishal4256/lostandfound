@@ -11,8 +11,13 @@ export const SocketProvider = ({ children }) => {
   const [onlineUsers, setOnlineUsers] = useState(new Set())
 
   useEffect(() => {
-    const socketUrl = import.meta.env.VITE_SOCKET_URL ||
-      (window.location.origin.includes('5173') ? 'http://localhost:5000' : window.location.origin)
+    let socketUrl = (import.meta.env.VITE_SOCKET_URL || '').trim();
+    if (!socketUrl) {
+      // In local dev, connect to localhost:5000. In production on Vercel, fallback to Render backend
+      const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+      socketUrl = isLocal ? 'http://localhost:5000' : 'https://lostandfound-f74b.onrender.com';
+    }
+    socketUrl = socketUrl.replace(/\/+$/, '');
 
     const socketInstance = io(socketUrl, {
       transports: ['websocket', 'polling'],

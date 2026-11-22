@@ -12,7 +12,7 @@ const claimRoutes = require('./routes/claimRoutes');
 const chatRoutes = require('./routes/chatRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const ragRoutes = require('./routes/ragRoutes');
-const { generateImageEmbedding } = require('./services/embeddingService');
+const { logMemoryUsage } = require('./services/embeddingService');
 
 const app = express();
 const server = http.createServer(app);
@@ -23,16 +23,30 @@ if (!JWT_SECRET) {
 }
 const PORT = process.env.PORT || 5000;
 
-const allowedOrigins = [
+// Production & development allowed origins
+const configuredOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
   'http://127.0.0.1:5173',
-  ...(process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',').map(s => s.trim()) : [])
-];
+  'https://havenfind512.vercel.app',
+  ...(process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',') : []),
+  ...(process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',') : [])
+].map(s => s.trim().replace(/\/+$/, '')).filter(Boolean);
+
+function isOriginAllowed(origin) {
+  if (!origin) return true;
+  const normalized = origin.trim().replace(/\/+$/, '');
+  return configuredOrigins.includes(normalized) || normalized.endsWith('.vercel.app');
+}
 
 const io = new Server(server, {
   cors: {
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      if (isOriginAllowed(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error(`Socket CORS disallowed origin: ${origin}`));
+    },
     methods: ['GET', 'POST', 'PATCH', 'DELETE'],
     credentials: true
   }
@@ -40,7 +54,12 @@ const io = new Server(server, {
 
 // Middleware
 app.use(cors({
-  origin: allowedOrigins,
+  origin: (origin, callback) => {
+    if (isOriginAllowed(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error(`Express CORS disallowed origin: ${origin}`));
+  },
   credentials: true
 }));
 app.use(express.json({ limit: '2mb' }));
@@ -48,6 +67,14 @@ app.use(express.json({ limit: '2mb' }));
 // Attach Socket.IO instance to all route handlers
 app.use((req, res, next) => {
   req.io = io;
+  next();
+});
+
+// Normalize duplicated /api/api/ prefixes if any client requests it
+app.use((req, res, next) => {
+  if (req.url.startsWith('/api/api/')) {
+    req.url = req.url.replace('/api/api/', '/api/');
+  }
   next();
 });
 
@@ -59,12 +86,19 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/ai', ragRoutes);
 
-// Health check endpoint
+// Health check endpoint with diagnostic memory tracking
 app.get('/api/health', (req, res) => {
+  const mem = logMemoryUsage('HealthCheck');
   res.status(200).json({
     status: 'ok',
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString()
+    uptime: Math.round(process.uptime()),
+    timestamp: new Date().toISOString(),
+    memory: {
+      rssMB: +(mem.rss / 1024 / 1024).toFixed(2),
+      heapUsedMB: +(mem.heapUsed / 1024 / 1024).toFixed(2),
+      heapTotalMB: +(mem.heapTotal / 1024 / 1024).toFixed(2),
+      externalMB: +(mem.external / 1024 / 1024).toFixed(2)
+    }
   });
 });
 
@@ -236,10 +270,11 @@ io.on('connection', (socket) => {
   });
 });
 
-// ── MongoDB Connection & CLIP Model Pre-warming ──────────────
+// ── MongoDB Connection & Server Initialization ────────────────
 mongoose.connect(process.env.MONGO_URI)
 .then(async () => {
-  console.log('Connected to MongoDB Atlas');
+  console.log('✅ Connected to MongoDB Atlas');
+  logMemoryUsage('MongoConnected');
 
   // Drop stale 2dsphere index if lingering
   try {
@@ -251,31 +286,13 @@ mongoose.connect(process.env.MONGO_URI)
       console.log('✅ Dropped legacy location_2dsphere index');
     }
   } catch (err) {
-    console.warn('Index migration skipped:', err.message);
+    console.warn('Index migration check skipped:', err.message);
   }
 
-  // Pre-warm local CLIP model
-  (async () => {
-    try {
-      console.log('Pre-warming CLIP model…');
-      const https = require('https');
-      const buf = await new Promise((resolve, reject) => {
-        https.get('https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=64&q=50', res => {
-          const chunks = [];
-          res.on('data', c => chunks.push(c));
-          res.on('end', () => resolve(Buffer.concat(chunks)));
-          res.on('error', reject);
-        });
-      });
-      await generateImageEmbedding(buf);
-      console.log('✅ CLIP model ready');
-    } catch (err) {
-      console.warn('Pre-warm warning (will load on demand):', err.message);
-    }
-  })();
-
   server.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`🚀 HavenFind server running on port ${PORT}`);
+    logMemoryUsage('ServerReady');
+    console.log('ℹ️ Local CLIP model is set to lazy-load on demand.');
   });
 })
 .catch(err => {
